@@ -16,7 +16,9 @@ pupil-tracker = "eye_synth.tracker:main"
 pupil-player = "eye_synth.player:main"
 
 [dependency-groups]
-dev = []
+dev = [
+    "opencv-stubs>=0.1.3",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -24,3 +26,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/eye_synth"]
+
+[tool.ty.environment]
+python = ".venv"

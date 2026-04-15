@@ -107,7 +107,7 @@ def run_tracker(
                             message.frame.height,
                         )
                         draw_gaze_crosshair(display, gx, gy, pipeline.processor.last_gaze.confidence)
-                        draw_region_box(display, gx, gy, region_size, pipeline.processor.last_gaze.confidence)
+                        draw_region_box(display, gx, gy, pipeline.processor.region_size, pipeline.processor.last_gaze.confidence)
 
                     if show_overlay and pipeline.last_color_reading is not None:
                         draw_brightness_bar(display, pipeline.last_color_reading.smoothed_brightness)
