@@ -12,10 +12,8 @@ import numpy as np
 
 from eye_synth.input.recording import Recording
 from eye_synth.output import (
-    ColorConsoleSink, MultiSink, PureDataSink,
-    apply_gamma, build_gamma_lut,
-    draw_brightness_bar, draw_color_info, draw_eye_panel,
-    draw_gaze_crosshair, draw_region_box,
+    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink,
+    apply_gamma, build_gamma_lut, draw_overlay,
 )
 from eye_synth.patches import Patch, load_patch
 from eye_synth.signals.bus import OutputBus
@@ -59,6 +57,10 @@ class GazeVideoPlayer:
 
         self._outputs = outputs if outputs is not None else OutputBus()
         self._patch = patch if patch is not None else load_patch("TNC_v1")
+        self._overlay_cfg = getattr(self._patch, 'overlay', DEFAULT_OVERLAY)
+
+        # Cached color reading for overlay — persists across pipeline.reset() on pause
+        self._last_color_reading = None
 
         # Blink/flutter display state
         self._blink_flash_until = 0.0
@@ -70,64 +72,6 @@ class GazeVideoPlayer:
         if self.gamma == 1.0:
             return frame
         return apply_gamma(frame, self._gamma_lut)
-
-    def draw_color_info(self, frame: np.ndarray) -> np.ndarray:
-        if self.pipeline is None or self.pipeline.last_color_reading is None:
-            return frame
-        reading = self.pipeline.last_color_reading
-        draw_brightness_bar(frame, reading.smoothed_brightness, x=10, y=80)
-        draw_color_info(frame, reading, x=10, y=30)
-        return frame
-
-    def draw_gaze(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        gaze = self.recording.get_gaze_for_frame(frame_index)
-        if gaze is None:
-            return frame
-        height, width = frame.shape[:2]
-        x, y = self.recording.gaze_to_pixel(gaze, width, height)
-        draw_gaze_crosshair(frame, x, y, gaze.confidence,
-                            radius=self.gaze_radius,
-                            confidence_threshold=self.confidence_threshold)
-        draw_region_box(frame, x, y, self.region_size, gaze.confidence,
-                        confidence_threshold=self.confidence_threshold)
-        return frame
-
-    def draw_eye_camera(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
-        eye_frame = self.recording.get_eye_frame_for_world_frame(frame_index)
-        world_ts = self.recording.get_frame_timestamp(frame_index)
-
-        blink = self.recording.get_blink_at_timestamp(world_ts)
-        if blink is not None:
-            self._blink_flash_until = world_ts + 0.2
-            if blink.duration_ms >= 0:
-                self._last_blink_label = (
-                    f"{blink.blink_type.value.upper()} {blink.duration_ms:.0f}ms"
-                )
-            else:
-                self._last_blink_label = "BLINK"
-        is_blinking = world_ts < self._blink_flash_until
-
-        flutter = self.recording.get_flutter_at_timestamp(world_ts)
-        if flutter is not None:
-            self._flutter_flash_until = world_ts + 0.2
-            self._last_flutter_event = flutter
-        is_flutter = world_ts < self._flutter_flash_until
-
-        flutter_label = None
-        if is_flutter and self._last_flutter_event is not None:
-            flutter_label = f"FLUTTER {self._last_flutter_event.blink_count} blinks"
-
-        draw_eye_panel(
-            frame,
-            eye_frame,
-            is_blink=is_blinking,
-            blink_label=self._last_blink_label if is_blinking else None,
-            is_flutter=is_flutter,
-            flutter_label=flutter_label,
-            blink_count=len(self.recording.blink_data),
-            flutter_count=len(self.recording.flutter_data),
-        )
-        return frame
 
     def draw_info(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]
@@ -260,17 +204,61 @@ class GazeVideoPlayer:
                 signals.eye.total_blinks = len(self.recording.blink_data)
                 signals.eye.total_flutters = len(self.recording.flutter_data)
 
-                if signals.has_env_reading and self.output is not None and self.pipeline.last_color_reading is not None:
-                    self.output.emit(self.pipeline.last_color_reading)
+                if signals.has_env_reading and self.pipeline.last_color_reading is not None:
+                    self._last_color_reading = self.pipeline.last_color_reading
+                    if self.output is not None:
+                        self.output.emit(self._last_color_reading)
 
                 self._patch.update(signals, self._outputs)
 
             # --- Draw overlays ---
             display_frame = current_frame.copy()
             if self.show_overlay:
-                display_frame = self.draw_color_info(display_frame)
-            display_frame = self.draw_gaze(display_frame, self.frame_index)
-            display_frame = self.draw_eye_camera(display_frame, self.frame_index)
+                _gaze = self.recording.get_gaze_for_frame(self.frame_index)
+                _gaze_px = None
+                _confidence = 0.0
+                if _gaze is not None:
+                    _gaze_px = self.recording.gaze_to_pixel(
+                        _gaze, display_frame.shape[1], display_frame.shape[0]
+                    )
+                    _confidence = _gaze.confidence
+
+                _eye_frame = self.recording.get_eye_frame_for_world_frame(self.frame_index)
+                _world_ts = self.recording.get_frame_timestamp(self.frame_index)
+
+                _blink_rec = self.recording.get_blink_at_timestamp(_world_ts)
+                if _blink_rec is not None:
+                    self._blink_flash_until = _world_ts + 0.2
+                    self._last_blink_label = (
+                        f"{_blink_rec.blink_type.value.upper()} {_blink_rec.duration_ms:.0f}ms"
+                        if _blink_rec.duration_ms >= 0 else "BLINK"
+                    )
+                _is_blinking = _world_ts < self._blink_flash_until
+
+                _flutter_rec = self.recording.get_flutter_at_timestamp(_world_ts)
+                if _flutter_rec is not None:
+                    self._flutter_flash_until = _world_ts + 0.2
+                    self._last_flutter_event = _flutter_rec
+                _is_flutter = _world_ts < self._flutter_flash_until
+                _flutter_label = (
+                    f"FLUTTER {self._last_flutter_event.blink_count} blinks"
+                    if _is_flutter and self._last_flutter_event is not None else None
+                )
+
+                draw_overlay(
+                    display_frame, self._overlay_cfg,
+                    gaze_px=_gaze_px,
+                    confidence=_confidence,
+                    region_size=self.region_size,
+                    color_reading=self._last_color_reading,
+                    eye_frame=_eye_frame,
+                    is_blink=_is_blinking,
+                    blink_label=self._last_blink_label if _is_blinking else None,
+                    is_flutter=_is_flutter,
+                    flutter_label=_flutter_label,
+                    blink_count=len(self.recording.blink_data),
+                    flutter_count=len(self.recording.flutter_data),
+                )
             display_frame = self.draw_info(display_frame)
             if show_help:
                 display_frame = self.draw_help(display_frame)

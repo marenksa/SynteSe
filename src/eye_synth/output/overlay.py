@@ -1,11 +1,38 @@
-"""Shared overlay drawing functions for gaze visualisation."""
+"""Shared overlay drawing functions and per-patch config for gaze visualisation."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
 from eye_synth.signals.env_color import ColorReading
+
+
+@dataclass
+class OverlayConfig:
+    """Declares which overlay elements a patch wants displayed.
+
+    Gaze-position elements are on by default; everything else must be
+    explicitly requested by each patch via a class-level ``overlay`` attribute.
+    """
+
+    # Gaze-position elements — on by default
+    show_gaze_crosshair: bool = True
+    show_region_box: bool = True
+
+    # Sensor/state readouts — off by default, request per patch
+    show_brightness_bar: bool = False
+    show_color_info: bool = False
+    show_confidence: bool = False
+    show_eye_panel: bool = True         # camera feed
+    show_blink_flutter: bool = False    # labels/counts below camera; only meaningful with show_eye_panel
+
+    eye_panel_size: int = 150           # display width in px
+
+
+DEFAULT_OVERLAY = OverlayConfig()
 
 
 def draw_brightness_bar(
@@ -43,12 +70,12 @@ def draw_color_info(
     cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
     cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
     hue_str = f"{color_reading.hue:.0f}" if color_reading.hue is not None else "N/A"
-    cv2.putText(frame, f"H:{hue_str}", (x + size + 10, y + 15),
+    cv2.putText(frame, f"H:{hue_str}", (x + size + 10, y + 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    cv2.putText(frame, f"S:{color_reading.saturation:.0f}", (x + size + 10, y + 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-    cv2.putText(frame, f"V:{color_reading.smoothed_brightness:.0f}", (x + size + 10, y + size - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+    cv2.putText(frame, f"S:{color_reading.saturation:.0f}", (x + size + 10, y + 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, f"V:{color_reading.smoothed_brightness:.0f}", (x + size + 10, y + 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 
 def draw_gaze_crosshair(
@@ -95,6 +122,7 @@ def draw_eye_panel(
     flutter_label: str | None = None,
     blink_count: int = 0,
     flutter_count: int = 0,
+    show_state: bool = True,
     margin: int = 10,
     display_width: int = 150,
 ) -> None:
@@ -125,21 +153,71 @@ def draw_eye_panel(
                   border_color, border_width)
     frame[y_offset:y_offset + eh, x_offset:x_offset + ew] = eye_resized
 
-    text_y = y_offset + eh + 20
-    if is_blink and blink_label:
-        cv2.putText(frame, blink_label, (x_offset, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-    else:
-        cv2.putText(frame, f"Blinks: {blink_count}", (x_offset, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+    if show_state:
+        text_y = y_offset + eh + 20
+        if is_blink and blink_label:
+            cv2.putText(frame, blink_label, (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        else:
+            cv2.putText(frame, f"Blinks: {blink_count}", (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
-    text_y += 22
-    if is_flutter and flutter_label:
-        cv2.putText(frame, flutter_label, (x_offset, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-    else:
-        cv2.putText(frame, f"Flutter: {flutter_count}", (x_offset, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        text_y += 22
+        if is_flutter and flutter_label:
+            cv2.putText(frame, flutter_label, (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        else:
+            cv2.putText(frame, f"Flutter: {flutter_count}", (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+
+def draw_confidence(
+    frame: np.ndarray,
+    confidence: float,
+    x: int = 10,
+    y: int = 30,
+) -> None:
+    color = (0, 255, 0) if confidence >= 0.6 else (0, 165, 255)
+    cv2.putText(frame, f"Conf: {confidence:.2f}", (x, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
+
+
+def draw_overlay(
+    frame: np.ndarray,
+    cfg: OverlayConfig,
+    *,
+    gaze_px: tuple[int, int] | None = None,
+    confidence: float = 0.0,
+    region_size: int = 50,
+    color_reading: ColorReading | None = None,
+    eye_frame: np.ndarray | None = None,
+    is_blink: bool = False,
+    blink_label: str | None = None,
+    is_flutter: bool = False,
+    flutter_label: str | None = None,
+    blink_count: int = 0,
+    flutter_count: int = 0,
+) -> None:
+    """Draw all overlay elements requested by ``cfg`` onto ``frame`` in-place."""
+    if cfg.show_gaze_crosshair and gaze_px is not None:
+        draw_gaze_crosshair(frame, *gaze_px, confidence)
+    if cfg.show_region_box and gaze_px is not None:
+        draw_region_box(frame, *gaze_px, region_size, confidence)
+    if cfg.show_color_info and color_reading is not None:
+        draw_color_info(frame, color_reading, x=10, y=10)
+    if cfg.show_brightness_bar and color_reading is not None:
+        draw_brightness_bar(frame, color_reading.smoothed_brightness, x=10, y=60)
+    if cfg.show_confidence:
+        draw_confidence(frame, confidence, x=10, y=30)
+    if cfg.show_eye_panel:
+        draw_eye_panel(
+            frame, eye_frame,
+            display_width=cfg.eye_panel_size,
+            show_state=cfg.show_blink_flutter,
+            is_blink=is_blink, blink_label=blink_label,
+            is_flutter=is_flutter, flutter_label=flutter_label,
+            blink_count=blink_count, flutter_count=flutter_count,
+        )
 
 
 def build_gamma_lut(gamma: float) -> np.ndarray:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from eye_synth.output.overlay import OverlayConfig
 from eye_synth.signals.bus import OutputBus, SignalBus
 
 INTENTIONAL_MS = 250  # ms eyes must be closed to count as intentional (half the global 500ms)
@@ -20,6 +21,12 @@ class ConfidenceStreamPatch:
         intentional <0|1>  —  1 while eyes have been closed >= INTENTIONAL_MS
         blink <0|1>        —  1 while eyes are closed
     """
+
+    overlay = OverlayConfig(
+        show_confidence=True,
+        show_eye_panel=True,
+        show_blink_flutter=True,
+    )
 
     def __init__(self) -> None:
         self._eyes_closed_since: float | None = None

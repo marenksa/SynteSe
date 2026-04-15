@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from eye_synth.output.overlay import OverlayConfig
 from eye_synth.patches.TgSqC_v1.mapping import ColorIdMapper
 from eye_synth.signals.bus import OutputBus, SignalBus
 
@@ -23,6 +24,12 @@ class ColorTogglePatch:
     On first stable detection:
         color_id N  →  toggle 1
     """
+
+    overlay = OverlayConfig(
+        show_color_info=True,
+        show_eye_panel=True,
+        # show_blink_flutter=False — camera visible for audience, no state labels
+    )
 
     def __init__(self) -> None:
         self._mapper = ColorIdMapper()

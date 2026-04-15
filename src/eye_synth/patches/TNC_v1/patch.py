@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from eye_synth.output.overlay import OverlayConfig
 from eye_synth.patches.TNC_v1.gate import NoteGate
 from eye_synth.patches.TNC_v1.mapping import NoteMapper
 from eye_synth.signals.bus import OutputBus, SignalBus
@@ -16,6 +17,13 @@ class ColorMusicPatch:
     - Flutter burst end  →  effect value (0–1, scaled by blink count)
     - Intentional blink  →  effect 0  (clears the effect)
     """
+
+    overlay = OverlayConfig(
+        show_brightness_bar=True,
+        show_color_info=True,
+        show_eye_panel=True,
+        show_blink_flutter=True,
+    )
 
     def __init__(self) -> None:
         self._note_mapper = NoteMapper()

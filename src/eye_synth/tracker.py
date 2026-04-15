@@ -9,10 +9,8 @@ import numpy as np
 
 from eye_synth.input.live import PupilCaptureClient
 from eye_synth.output import (
-    ColorConsoleSink, MultiSink, PureDataSink,
-    apply_gamma, build_gamma_lut,
-    draw_brightness_bar, draw_color_info, draw_eye_panel,
-    draw_gaze_crosshair, draw_region_box,
+    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink,
+    apply_gamma, build_gamma_lut, draw_overlay,
 )
 from eye_synth.patches import load_patch
 from eye_synth.signals.bus import OutputBus
@@ -36,6 +34,7 @@ def run_tracker(
     pd_sink = PureDataSink(host=pd_host, port=pd_port)
     outputs = OutputBus(pd_sink)
     patch = load_patch(patch_name)
+    overlay_cfg = getattr(patch, 'overlay', DEFAULT_OVERLAY)
 
     console_output = MultiSink()
     console_output.add_sink(ColorConsoleSink(verbose=verbose))
@@ -99,32 +98,35 @@ def run_tracker(
                         frame_data if frame_data is not None else message.frame.data
                     ).copy()
 
-                    if pipeline.processor.last_gaze is not None:
-                        gx, gy = pipeline.processor.norm_to_pixel(
-                            pipeline.processor.last_gaze.norm_pos[0],
-                            pipeline.processor.last_gaze.norm_pos[1],
-                            message.frame.width,
-                            message.frame.height,
+                    if show_overlay:
+                        gaze_px = None
+                        confidence = 0.0
+                        if pipeline.processor.last_gaze is not None:
+                            gx, gy = pipeline.processor.norm_to_pixel(
+                                pipeline.processor.last_gaze.norm_pos[0],
+                                pipeline.processor.last_gaze.norm_pos[1],
+                                message.frame.width,
+                                message.frame.height,
+                            )
+                            gaze_px = (gx, gy)
+                            confidence = pipeline.processor.last_gaze.confidence
+
+                        is_blink = now < blink_flash_until
+                        is_flutter = now < flutter_flash_until or pipeline.blink_tracker.is_flutter_active
+                        draw_overlay(
+                            display, overlay_cfg,
+                            gaze_px=gaze_px,
+                            confidence=confidence,
+                            region_size=pipeline.processor.region_size,
+                            color_reading=pipeline.last_color_reading,
+                            eye_frame=latest_eye_frame,
+                            is_blink=is_blink,
+                            blink_label=last_blink_label if is_blink else None,
+                            is_flutter=is_flutter,
+                            flutter_label=last_flutter_label if is_flutter else None,
+                            blink_count=pipeline.blink_tracker.blink_count,
+                            flutter_count=pipeline.blink_tracker.flutter_count,
                         )
-                        draw_gaze_crosshair(display, gx, gy, pipeline.processor.last_gaze.confidence)
-                        draw_region_box(display, gx, gy, pipeline.processor.region_size, pipeline.processor.last_gaze.confidence)
-
-                    if show_overlay and pipeline.last_color_reading is not None:
-                        draw_brightness_bar(display, pipeline.last_color_reading.smoothed_brightness)
-                        draw_color_info(display, pipeline.last_color_reading)
-
-                    is_blink = now < blink_flash_until
-                    is_flutter = now < flutter_flash_until or pipeline.blink_tracker.is_flutter_active
-                    draw_eye_panel(
-                        display,
-                        latest_eye_frame,
-                        is_blink=is_blink,
-                        blink_label=last_blink_label if is_blink else None,
-                        is_flutter=is_flutter,
-                        flutter_label=last_flutter_label if is_flutter else None,
-                        blink_count=pipeline.blink_tracker.blink_count,
-                        flutter_count=pipeline.blink_tracker.flutter_count,
-                    )
 
                     cv2.imshow("Pupil Tracker", display)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
