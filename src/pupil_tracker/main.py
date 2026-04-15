@@ -7,26 +7,19 @@ import time
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, NoteEvent, NoteGate
-from pupil_tracker.recording import FLUTTER_MIN_BLINKS, BlinkType
-from pupil_tracker.client import PupilCaptureClient
-from pupil_tracker.eye_events import StreamingBlinkTracker
+from pupil_tracker.input.live import PupilCaptureClient
 from pupil_tracker.output import (
-    ColorConsoleSink,
-    MultiSink,
-    PureDataSink,
-    flutter_to_lfo,
+    ColorConsoleSink, MultiSink, PureDataSink,
+    apply_gamma, build_gamma_lut,
+    draw_brightness_bar, draw_color_info, draw_eye_panel,
+    draw_gaze_crosshair, draw_region_box,
 )
-from pupil_tracker.overlay import (
-    apply_gamma,
-    build_gamma_lut,
-    draw_brightness_bar,
-    draw_color_info,
-    draw_eye_panel,
-    draw_gaze_crosshair,
-    draw_region_box,
-)
-from pupil_tracker.processor import FrameProcessor
+from pupil_tracker.patches import load_patch
+from pupil_tracker.signals.bus import OutputBus, SignalBus
+from pupil_tracker.signals.env_color import ColorAnalyzer, ColorReading, FrameProcessor
+from pupil_tracker.signals.env_scene_change import SceneChangeDetector
+from pupil_tracker.signals.eye_blinks import StreamingBlinkTracker
+from pupil_tracker.signals.eye_gaze import GazeVelocityTracker
 
 
 def run_tracker(
@@ -43,25 +36,10 @@ def run_tracker(
     octave_stability: int = 3,
     octave_threshold: float = 0.5,
     gamma: float = 1.0,
+    patch_name: str = "color_music",
 ) -> None:
-    """Run the color-to-music tracker.
-
-    Args:
-        host: Pupil Capture host address.
-        port: Pupil Capture control port.
-        region_size: Size of the gaze region to analyze.
-        smoothing: Number of frames to average for smoothing.
-        show_video: Whether to display the video feed.
-        verbose: Whether to print verbose console output.
-        pd: Enable Pure Data output via FUDI protocol.
-        pd_host: Pure Data host address.
-        pd_port: Pure Data FUDI port.
-        note_stability: Frames for note stability.
-        octave_stability: Frames for octave stability.
-        octave_threshold: Agreement threshold for octave changes (0-1).
-        gamma: Gamma correction value (< 1.0 brightens, > 1.0 darkens).
-    """
-    # Initialize components
+    """Run the color-to-music tracker."""
+    # --- Detection pipeline ---
     processor = FrameProcessor(region_size=region_size)
     analyzer = ColorAnalyzer(
         smoothing_window=smoothing,
@@ -69,33 +47,28 @@ def run_tracker(
         octave_stability_frames=octave_stability,
         octave_stability_threshold=octave_threshold,
     )
-
-    # Gamma correction
+    blink_tracker = StreamingBlinkTracker()
+    scene_detector = SceneChangeDetector()
+    gaze_vel = GazeVelocityTracker()
     gamma_lut = build_gamma_lut(gamma)
 
-    # Set up output sinks
-    output = MultiSink()
-    output.add_sink(ColorConsoleSink(verbose=verbose))
+    # --- Signal bus and patch ---
+    signals = SignalBus()
+    pd_sink: PureDataSink | None = PureDataSink(host=pd_host, port=pd_port) if pd else None
+    outputs = OutputBus(pd_sink)
+    patch = load_patch(patch_name)
 
-    # Set up Pure Data output for note events
-    pd_sink: PureDataSink | None = None
-    if pd:
-        pd_sink = PureDataSink(host=pd_host, port=pd_port)
+    # --- Console output (continuous, separate from patch) ---
+    console_output = MultiSink()
+    console_output.add_sink(ColorConsoleSink(verbose=verbose))
 
-    # Content-based note triggering
-    note_gate = NoteGate()
-
-    # Streaming blink tracker (classifies blinks, detects flutter)
-    blink_tracker = StreamingBlinkTracker()
-
-    # Eye event display state
+    # --- Display state (overlay only, not sent to outputs) ---
     blink_flash_until = 0.0
     last_blink_label: str | None = None
     flutter_flash_until = 0.0
     last_flutter_label: str | None = None
-
-    # Latest eye frame for display
     latest_eye_frame: np.ndarray | None = None
+    last_reading: ColorReading | None = None
 
     print("=" * 60)
     print("Pupil Color-to-Music Tracker")
@@ -104,7 +77,7 @@ def run_tracker(
     print(f"  Region size: {region_size}px")
     print(f"  Smoothing window: {smoothing} frames")
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
-    print("  Mode: COLOR → MUSIC (content-based note triggering)")
+    print(f"  Patch: {patch_name}")
     if pd:
         print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
     if gamma != 1.0:
@@ -113,31 +86,31 @@ def run_tracker(
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
 
-    last_reading: ColorReading | None = None
-    latest_gaze_confidence: float = 0.0
-    noise_was_active: bool = False
-
     try:
         with PupilCaptureClient(host=host, port=port) as client:
             for message in client.stream_realtime():
                 now = time.monotonic()
+                signals.clear_events()
+                signals.timestamp = now
 
-                # Update gaze (may come with frame or alone)
+                # --- Update gaze ---
                 if message.gaze is not None:
-                    processor.update_gaze(message.gaze)
-                    latest_gaze_confidence = message.gaze.confidence
+                    if processor.update_gaze(message.gaze):
+                        signals.eye.confidence = message.gaze.confidence
+                        signals.eye.norm_pos = message.gaze.norm_pos
 
-                # New fixation = new object of interest
+                # --- New fixation ---
                 if message.fixation is not None:
-                    note_gate.new_fixation(message.fixation.id)
+                    signals.eye.fixation_id = message.fixation.id
 
-                # Feed blink events to tracker
+                # --- Blink events ---
                 if message.blink is not None:
                     b = message.blink
                     blink_event, _ = blink_tracker.update(
                         b.blink_type, b.timestamp, b.confidence
                     )
                     if blink_event is not None:
+                        signals.eye.blink = blink_event
                         blink_flash_until = now + 0.3
                         if blink_event.duration_ms >= 0:
                             last_blink_label = (
@@ -146,43 +119,39 @@ def run_tracker(
                             )
                         else:
                             last_blink_label = "BLINK"
-
-                        if (
-                            pd_sink is not None
-                            and blink_event.blink_type == BlinkType.INTENTIONAL
-                        ):
-                            pd_sink.emit_am_lfo(0)
-
-                    # Update overlay label immediately when flutter becomes active
                     if blink_tracker.is_flutter_active:
                         last_flutter_label = (
                             f"FLUTTER {blink_tracker.active_flutter_blink_count} blinks"
                         )
 
-                # Check for flutter end (timeout-based, runs every iteration)
+                # --- Flutter timeout ---
                 flutter_event = blink_tracker.tick(now)
                 if flutter_event is not None:
+                    signals.eye.flutter = flutter_event
                     flutter_flash_until = now + 0.3
-                    last_flutter_label = (
-                        f"FLUTTER {flutter_event.blink_count} blinks"
-                    )
+                    last_flutter_label = f"FLUTTER {flutter_event.blink_count} blinks"
 
-                    if pd_sink is not None:
-                        pd_sink.emit_am_lfo(flutter_to_lfo(flutter_event.blink_count, FLUTTER_MIN_BLINKS))
+                # --- Sync blink/flutter state to bus ---
+                signals.eye.is_eyes_closed = blink_tracker.is_eyes_closed
+                signals.eye.is_flutter_active = blink_tracker.is_flutter_active
+                signals.eye.flutter_blink_count = blink_tracker.active_flutter_blink_count
+                signals.eye.total_blinks = blink_tracker.blink_count
+                signals.eye.total_flutters = blink_tracker.flutter_count
 
-                # Store latest eye frame for display
+                # --- Eye frame for display ---
                 if message.eye_frame is not None:
                     latest_eye_frame = message.eye_frame.data
 
-                # Process on new frame (real-time, no buffering)
+                # --- Frame processing ---
                 if message.frame is not None:
                     processor.update_frame(message.frame)
+                    signals.frame_width = message.frame.width
+                    signals.frame_height = message.frame.height
 
-                    # Apply gamma correction before analysis
+                    # Gamma correction
                     frame_data = message.frame.data
                     if gamma != 1.0:
                         frame_data = apply_gamma(frame_data, gamma_lut)
-                        # Update processor's frame with gamma-corrected data
                         processor._last_frame = message.frame.__class__(
                             timestamp=message.frame.timestamp,
                             width=message.frame.width,
@@ -191,43 +160,30 @@ def run_tracker(
                             topic=message.frame.topic,
                         )
 
-                    # Extract gaze region and analyze for display
+                    # Scene change (full frame)
+                    signals.env.scene_change = scene_detector.update(frame_data)
+
+                    # Gaze region analysis
                     gaze_region = processor.extract_region()
                     if gaze_region is not None:
                         color_reading = analyzer.analyze(gaze_region)
-                        output.emit(color_reading)
                         last_reading = color_reading
 
-                        if pd_sink is not None:
-                            noise_active = blink_tracker.is_eyes_closed or blink_tracker.is_flutter_active
-                            if noise_active:
-                                pd_sink.emit_confidence(latest_gaze_confidence)
-                            elif noise_was_active:
-                                pd_sink.emit_confidence(1.0)  # reset once on exit
-                            noise_was_active = noise_active
+                        # Populate env signals
+                        signals.env.hue = color_reading.smoothed_hue
+                        signals.env.hue_normalized = color_reading.smoothed_hue / 179.0
+                        signals.env.saturation = color_reading.saturation
+                        signals.env.brightness = color_reading.smoothed_brightness
+                        signals.env.brightness_normalized = (
+                            color_reading.smoothed_brightness / 255.0
+                        )
+                        signals.env.note = color_reading.note
+                        signals.env.octave = color_reading.octave
+                        signals.env.midi_note = color_reading.midi_note
+                        signals.env.raw_midi_note = color_reading.raw_midi_note
+                        signals.has_env_reading = True
 
-                        # Content-based note triggering (suppressed during flutter)
-                        if (
-                            pd_sink is not None
-                            and not blink_tracker.is_flutter_active
-                            and note_gate.update(color_reading.midi_note, color_reading.raw_midi_note)
-                        ):
-                            note_event = NoteEvent(
-                                timestamp=color_reading.timestamp,
-                                note=color_reading.note,
-                                octave=color_reading.octave,
-                                midi_note=color_reading.midi_note,
-                                brightness=color_reading.smoothed_brightness / 255.0,
-                                center_x=color_reading.center_x,
-                                center_y=color_reading.center_y,
-                            )
-                            pd_sink.emit(note_event)
-
-                    # Display video with overlay
-                    if show_video:
-                        frame = frame_data.copy()
-
-                        # Draw gaze crosshair and region box
+                        # Gaze velocity and pixel position
                         if processor.last_gaze is not None:
                             gx, gy = processor.norm_to_pixel(
                                 processor.last_gaze.norm_pos[0],
@@ -235,30 +191,37 @@ def run_tracker(
                                 message.frame.width,
                                 message.frame.height,
                             )
-                            draw_gaze_crosshair(
-                                frame, gx, gy,
-                                processor.last_gaze.confidence,
+                            signals.eye.px_pos = (gx, gy)
+                            gaze_vel.update(
+                                processor.last_gaze.norm_pos,
+                                processor.last_gaze.timestamp,
+                                message.frame.width,
+                                message.frame.height,
                             )
-                            draw_region_box(
-                                frame, gx, gy,
-                                region_size,
-                                processor.last_gaze.confidence,
-                            )
+                            signals.eye.velocity_px_s = gaze_vel.velocity
 
-                        # Draw color/brightness info
-                        if last_reading is not None:
-                            draw_brightness_bar(
-                                frame,
-                                last_reading.smoothed_brightness,
+                        console_output.emit(color_reading)
+
+                    # --- Display overlay ---
+                    if show_video:
+                        frame = frame_data.copy()
+
+                        if processor.last_gaze is not None:
+                            gx, gy = processor.norm_to_pixel(
+                                processor.last_gaze.norm_pos[0],
+                                processor.last_gaze.norm_pos[1],
+                                message.frame.width,
+                                message.frame.height,
                             )
+                            draw_gaze_crosshair(frame, gx, gy, processor.last_gaze.confidence)
+                            draw_region_box(frame, gx, gy, region_size, processor.last_gaze.confidence)
+
+                        if last_reading is not None:
+                            draw_brightness_bar(frame, last_reading.smoothed_brightness)
                             draw_color_info(frame, last_reading)
 
-                        # Draw eye camera panel with event indicators
                         is_blink = now < blink_flash_until
-                        is_flutter = (
-                            now < flutter_flash_until
-                            or blink_tracker.is_flutter_active
-                        )
+                        is_flutter = now < flutter_flash_until or blink_tracker.is_flutter_active
                         draw_eye_panel(
                             frame,
                             latest_eye_frame,
@@ -271,11 +234,11 @@ def run_tracker(
                         )
 
                         cv2.imshow("Pupil Color-to-Music", frame)
-
-                        # Check for quit
-                        key = cv2.waitKey(1) & 0xFF
-                        if key == ord("q"):
+                        if cv2.waitKey(1) & 0xFF == ord("q"):
                             break
+
+                # --- Dispatch to patch ---
+                patch.update(signals, outputs)
 
     except ConnectionError as e:
         print(f"\n[ERROR] Could not connect to Pupil Capture: {e}")
@@ -284,10 +247,10 @@ def run_tracker(
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user.")
     finally:
-        output.close()
+        console_output.close()
         if pd_sink is not None:
-            pd_sink.emit_confidence(1.0)
-            pd_sink.emit_am_lfo(0)
+            pd_sink.send("confidence", 1.0)
+            pd_sink.send("am_lfo", 0)
             pd_sink.close()
         if show_video:
             cv2.destroyAllWindows()
@@ -301,89 +264,29 @@ def main() -> None:
         description="Stream gaze data from Pupil Core and map colors to musical notes.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="127.0.0.1",
-        help="Pupil Capture host address",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=50020,
-        help="Pupil Capture control port",
-    )
-    parser.add_argument(
-        "--region-size",
-        type=int,
-        default=50,
-        help="Size of the gaze region to analyze (pixels)",
-    )
-    parser.add_argument(
-        "--smoothing",
-        type=int,
-        default=3,
-        help="Number of frames to average for smoothing",
-    )
-    parser.add_argument(
-        "--no-video",
-        action="store_true",
-        help="Disable video display",
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose console output",
-    )
-    parser.add_argument(
-        "--gamma",
-        type=float,
-        default=1.0,
-        help="Gamma correction value. Values < 1.0 brighten (e.g., 0.5), "
-        "values > 1.0 darken. Default: 1.0 (no correction)",
-    )
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=50020)
+    parser.add_argument("--region-size", type=int, default=50,
+                        help="Size of the gaze region to analyze (pixels)")
+    parser.add_argument("--smoothing", type=int, default=3,
+                        help="Number of frames to average for smoothing")
+    parser.add_argument("--no-video", action="store_true", help="Disable video display")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--gamma", type=float, default=1.0,
+                        help="Gamma correction (< 1.0 brightens, > 1.0 darkens)")
+    parser.add_argument("--patch", type=str, default="color_music",
+                        help="Patch to use for mapping signals to outputs")
 
-    # Stability options
     stability_group = parser.add_argument_group("Stability tuning")
-    stability_group.add_argument(
-        "--note-stability",
-        type=int,
-        default=2,
-        help="Frames for note stability (lower = faster response)",
-    )
-    stability_group.add_argument(
-        "--octave-stability",
-        type=int,
-        default=3,
-        help="Frames for octave stability (higher = more stable)",
-    )
-    stability_group.add_argument(
-        "--octave-threshold",
-        type=float,
-        default=0.5,
-        help="Agreement threshold for octave changes 0-1 (higher = harder to change)",
-    )
+    stability_group.add_argument("--note-stability", type=int, default=2)
+    stability_group.add_argument("--octave-stability", type=int, default=3)
+    stability_group.add_argument("--octave-threshold", type=float, default=0.5)
 
-    # Pure Data output options
     pd_group = parser.add_argument_group("Pure Data output")
-    pd_group.add_argument(
-        "--pd",
-        action="store_true",
-        help="Send to Pure Data via FUDI protocol (TCP)",
-    )
-    pd_group.add_argument(
-        "--pd-host",
-        type=str,
-        default="127.0.0.1",
-        help="Pure Data host address",
-    )
-    pd_group.add_argument(
-        "--pd-port",
-        type=int,
-        default=9001,
-        help="Pure Data FUDI port",
-    )
+    pd_group.add_argument("--pd", action="store_true",
+                          help="Send to Pure Data via FUDI protocol (TCP)")
+    pd_group.add_argument("--pd-host", type=str, default="127.0.0.1")
+    pd_group.add_argument("--pd-port", type=int, default=9001)
 
     args = parser.parse_args()
 
@@ -401,6 +304,7 @@ def main() -> None:
         octave_stability=args.octave_stability,
         octave_threshold=args.octave_threshold,
         gamma=args.gamma,
+        patch_name=args.patch,
     )
 
 

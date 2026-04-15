@@ -4,362 +4,245 @@ This document provides guidance for AI agents working in this repository.
 
 ## Project Overview
 
-**Goal**: Build a real-time eye tracking color-to-music system that:
-1. Streams gaze and video data from Pupil Core hardware
-2. Analyzes color at the gaze point (hue → note, brightness → octave)
-3. Triggers notes on fixation events (when gaze dwells on a point)
-4. Outputs to Pure Data for sound synthesis
+**Goal**: Build a modular eye tracking system for creating audiovisual prototypes with Pupil Core. The system detects signals from the gaze and environment, and routes them to sound synthesis in Pure Data via swappable patches.
 
-**Current State**: Content-based note triggering via `NoteGate`. Notes trigger when the detected MIDI note stabilizes after a real transition — no dependency on gaze velocity or Pupil fixation events.
-
-**Future Direction**: Explore spatial mapping, pentatonic scales, or other approaches for more predictable/playable melodies.
+**Design philosophy**: Detectors and creative mappings are strictly separated. Detectors run the same way regardless of the prototype. Each prototype is a self-contained patch file. See `patches/__init__.py` for the `Patch` protocol.
 
 ## Architecture
 
 ```
 Pupil Capture (external app)
-    → ZMQ/MessagePack protocol
-    → Our Python client (gaze, frames)
-    → Color analysis at gaze point
-    → NoteGate: trigger when MIDI note stabilizes after transition
-    → PureDataSink → Pure Data (ADSR envelope synthesis)
+    → ZMQ/MessagePack
+    → input/live.py      — raw data (gaze, frames, blinks, fixations)
+    → main.py / player.py — populates SignalBus, calls patch each iteration
+
+SignalBus (signals/bus.py)
+    eye.*   — confidence, position, velocity, blinks, flutter, fixation_id
+    env.*   — hue, brightness, note, octave, region_changed, scene_change
+    → patch.update(signals, outputs)
+
+OutputBus (signals/bus.py)
+    → outputs.send("key", value)  — generic FUDI to PureDataSink
+    → Pure Data (audio synthesis)
 ```
 
-### Key Components
+### Key Files
 
 | File | Purpose |
 |------|---------|
-| `client.py` | ZMQ connection to Pupil Capture, parses gaze/frame/fixation data |
-| `processor.py` | Gaze-to-pixel mapping, region extraction |
-| `analyzer.py` | Color analysis (ColorAnalyzer), NoteGate, NoteEvent |
-| `output.py` | Output sinks (ColorConsoleSink, PureDataSink) |
-| `recording.py` | Loads Pupil recordings (gaze, fixations, video) |
-| `player.py` | Plays back recordings with gaze overlay and note triggering |
-| `main.py` | CLI entry point for live tracking |
+| `input/live.py` | ZMQ connection to Pupil Capture, parses gaze/frame/blink/fixation |
+| `input/recording.py` | Loads Pupil recordings (gaze, fixations, blinks, flutter, video) |
+| `signals/env_color.py` | Colour analysis (ColorAnalyzer, FrameProcessor), NoteGate, NoteEvent |
+| `signals/env_scene_change.py` | Full-frame change magnitude |
+| `signals/eye_blinks.py` | Streaming blink/flutter detection, BlinkType, constants |
+| `signals/eye_gaze.py` | Gaze speed in px/s |
+| `signals/bus.py` | SignalBus, EyeSignals, EnvSignals, OutputBus |
+| `output/sinks.py` | PureDataSink (FUDI/TCP), ColorConsoleSink, MultiSink |
+| `output/overlay.py` | Stateless drawing functions (shared by main.py and player.py) |
+| `main.py` | Live tracker: populates SignalBus, calls patch |
+| `player.py` | Recording player: same pipeline, same patch |
+| `patches/__init__.py` | Patch protocol + load_patch() factory |
+| `patches/color_music/` | Prototype: hue→note, brightness→octave, flutter→AM-LFO |
 
-### Data Flow for Note Triggering
+### Signal Bus Fields
+
+**EyeSignals** (updated every iteration):
+- `confidence: float` — gaze tracking confidence 0–1
+- `norm_pos: (float, float)` — normalised gaze (0–1), Pupil convention
+- `px_pos: (int, int)` — pixel coordinates in world frame
+- `velocity_px_s: float` — gaze speed in pixels/second
+- `is_eyes_closed: bool` — between blink onset and offset
+- `blink: BlinkSample | None` — non-None for 1 iteration when blink completes
+- `is_flutter_active: bool` — during rapid blink burst
+- `flutter_blink_count: int` — blinks accumulated in active burst
+- `flutter: FlutterEvent | None` — non-None for 1 iteration when flutter ends
+- `fixation_id: int | None` — non-None for 1 iteration on new fixation
+
+**EnvSignals** (updated when gaze region is analysed, i.e. `signals.has_env_reading == True`):
+- `hue: float` — OpenCV hue 0–179 at gaze point
+- `hue_normalized: float` — 0–1
+- `saturation: float` — 0–255
+- `brightness: float` — 0–255
+- `brightness_normalized: float` — 0–1
+- `note: Note` — musical note C–B from hue
+- `octave: int` — octave 3–6 from brightness
+- `midi_note: int` — stable MIDI note (post-smoothing)
+- `raw_midi_note: int` — pre-stability MIDI note (for transition detection)
+- `region_changed: bool` — True for 1 iteration when NoteGate fires
+- `scene_change: float` — full-frame change magnitude 0–1
+
+### Data Flow Per Loop Iteration
 
 ```
-Each frame:
-    → Extract gaze region from frame
-    → ColorAnalyzer.analyze() → ColorReading (midi_note, note, octave)
-    → NoteGate.update(midi_note) → True if note just stabilized
-    → If triggered: create NoteEvent, send to PureDataSink
-    → PureDataSink sends "note_on <midi> <brightness>" to Pd
+signals.clear_events()
+
+if gaze message:    → signals.eye.confidence, norm_pos
+if fixation:        → signals.eye.fixation_id
+if blink:           → signals.eye.blink, is_eyes_closed, is_flutter_active
+blink_tracker.tick: → signals.eye.flutter (on burst end)
+
+if frame:
+    scene_detector  → signals.env.scene_change
+    gaze region     → signals.env.hue, brightness, note, octave, midi_note
+    gaze velocity   → signals.eye.velocity_px_s, px_pos
+    signals.has_env_reading = True
+
+patch.update(signals, outputs)   ← called every iteration
 ```
 
-### Pure Data Patch
+### Writing a Patch
 
-| File | Purpose |
-|------|---------|
-| `color_music.pd` | Receives `note_on` messages, ADSR envelope synthesis |
+```python
+class MyPatch:
+    def update(self, signals: SignalBus, outputs: OutputBus) -> None:
+        if not signals.has_env_reading:
+            return  # skip if no fresh frame data
+        outputs.send("key", value)   # sends "key value;" to Pure Data
 
-Message format: `note_on <midi_note> <brightness>`
-- `midi_note`: 36-84 (C2-B6)
-- `brightness`: 0.0-1.0 (can be used for velocity)
+    def reset(self) -> None:
+        pass  # called on seek/restart
+```
+
+Register in `patches/__init__.py` under `load_patch()`. Create `patches/<name>/` as a package with `__init__.py` containing the patch class and a `README.md` documenting the mappings.
 
 ## Critical Technical Knowledge
 
-### Content-Based Note Triggering (NoteGate)
+### NoteGate
 
-`NoteGate` in `analyzer.py` replaces earlier velocity-gated and fixation-based approaches. It tracks the **MIDI note stream** directly instead of gaze position or velocity.
+Lives inside `ColorMusicPatch` (not in main.py or player.py). Tracks the MIDI note stream and fires when note stabilises after a real transition.
 
-**Why**: With a head-mounted eye tracker, gaze pixel position doesn't represent world position — the scene moves, not the gaze. Velocity-based gating fails because eyes compensate for head movement. NoteGate works by detecting when the *content* changes and stabilizes.
+**Why not gaze velocity or fixation events**: With a head-mounted tracker, gaze pixel position doesn't represent world position — the scene moves, not the gaze. NoteGate detects when *content* changes and stabilises instead.
 
 **Parameters:**
-- `stable_frames` (default 4) — consecutive identical frames needed to trigger
-- `min_transition_frames` (default 3) — frames of different content needed before re-triggering the same note
+- `stable_frames` (default 4) — consecutive identical frames to trigger
+- `min_transition_frames` (default 3) — frames of different content before re-triggering same note
 
-**Behavior:**
-- Fires on first stable note
-- Fires when note changes and stabilizes (saccade to new color)
-- Fires when same note returns after a real transition (head turn away and back)
-- Does NOT fire on brief 1-2 frame jitter (text on book covers)
-- Does NOT re-fire while resting on the same content
+**Fires when**: new stable note, same note after real transition, new fixation ID
+**Does not fire**: brief 1–2 frame jitter, resting on same content, during flutter
 
-### Color-to-Music Mapping (7-Note Major Scale)
+### Blink Detection
+
+Uses Pupil Capture's built-in blink detector (onset/offset events), not confidence-based gating.
+
+- `BlinkType.BLINK` — duration < 400ms
+- `BlinkType.INTENTIONAL` — duration ≥ 500ms
+- `BlinkType.AMBIGUOUS` — 400–500ms
+
+**Flutter**: 4+ blinks in a 1.5s sliding window. Ends after 0.5s with no new blink.
+
+Real-time uses `StreamingBlinkTracker` (`signals/eye_blinks.py`). Recording playback reads from `recording.blink_data` and detects flutter transitions via `_prev_in_flutter` in player.py.
+
+### Colour-to-Note Mapping
 
 ```
-Color     Wavelength    OpenCV Hue    Note    Semitone
-─────────────────────────────────────────────────────
-Red       ~700nm        0-8, 165+     C       0
-Orange    ~620nm        8-25          D       2
-Yellow    ~580nm        25-38         E       4
-Green     ~530nm        38-75         F       5
-Cyan      ~500nm        75-95         G       7
-Blue      ~470nm        95-125        A       9
-Violet    ~400nm        125-165       B       11
+Red     ~700nm  OpenCV 0–8, 165+   C   semitone 0
+Orange  ~620nm  8–25               D   semitone 2
+Yellow  ~580nm  25–38              E   semitone 4
+Green   ~530nm  38–75              F   semitone 5
+Cyan    ~500nm  75–95              G   semitone 7
+Blue    ~470nm  95–125             A   semitone 9
+Violet  ~400nm  125–165            B   semitone 11
 ```
 
-Brightness (HSV Value channel) maps to octave 2-6.
-
-MIDI note calculation: `midi = (octave + 1) * 12 + semitone`
-
-### Note/Octave Stability
-
-Parameters are tuned for responsive detection (reduced from earlier sluggish values):
-
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `smoothing_window` | 3 | Frames to average for color smoothing |
-| `note_stability_frames` | 2 | Frames before note can change |
-| `octave_stability_frames` | 3 | Frames before octave can change |
-| `note_stability_threshold` | 0.5 | Agreement ratio for note change |
-| `octave_stability_threshold` | 0.5 | Agreement ratio for octave change |
-| `min_saturation` | 20 | Minimum saturation for hue detection |
-
-**Saturation threshold**: Lowered to 20 (from 50) to detect pastel colors (light pink, pale blue). Below 20 is typically gray/white where hue is meaningless.
-
-### Binocular Gaze Handling
-
-For recordings with binocular data (separate gaze.3d.0 and gaze.3d.1 topics):
-- Prefers combined gaze (gaze.3d.01.) if available
-- Otherwise selects the eye with **highest average confidence**
-- Prevents flickering from interleaved left/right eye data
+MIDI note: `(octave + 1) * 12 + semitone`
+Saturation threshold: 20/255 (below this, hue is unreliable — treat as grey).
 
 ### ZMQ Real-Time Streaming
 
-**IMPORTANT**: ZMQ SUB sockets buffer messages by default, causing massive lag. We MUST:
-
+ZMQ SUB sockets buffer by default. Always:
 ```python
-# Set minimal buffer
 subscriber.setsockopt(zmq.RCVHWM, 1)
 subscriber.setsockopt(zmq.LINGER, 0)
-
-# Drain to get LATEST message, not oldest
-while True:
-    try:
-        parts = subscriber.recv_multipart(flags=zmq.NOBLOCK)
-        latest = parts  # Keep draining
-    except zmq.Again:
-        break  # No more messages, use 'latest'
 ```
+Drain to latest message before processing. See `input/live.py`.
 
-### Pupil Capture Network API
+### Pupil Capture API
 
-- **Control port**: TCP 50020 (REQ/REP pattern)
-- **Data port**: Dynamic, obtained via `SUB_PORT` command
-- **Protocol**: ZeroMQ + MessagePack
-- **Topics**: `gaze.3d.*`, `frame.world`, `fixations`
+- Control port: TCP 50020 (REQ/REP)
+- Data port: dynamic, obtained via `SUB_PORT` command
+- Protocol: ZeroMQ + MessagePack
+- Topics: `gaze.*`, `frame.world`, `fixations`, `blinks`, `frame.eye.0`
 
-### Gaze Data Format
+### Coordinate System
 
-```python
-{
-    "topic": "gaze.3d.01.",  # Combined binocular preferred
-    "norm_pos": [0.5, 0.5],  # Normalized (0-1), origin at BOTTOM-LEFT
-    "confidence": 0.85,       # 0-1, filter < 0.5
-    "timestamp": 1234567.89,
-}
-```
-
-**Coordinate flip**: Pupil uses bottom-left origin, OpenCV uses top-left. Flip Y:
+Pupil uses (0,0) at bottom-left; OpenCV uses top-left. Flip Y:
 ```python
 pixel_y = int((1.0 - norm_y) * height)
 ```
 
-### Fixation Data Format
-
-```python
-{
-    "topic": "fixations",
-    "id": 42,
-    "timestamp": 1234567.89,
-    "duration": 150.0,        # ms
-    "norm_pos": [0.5, 0.5],
-    "dispersion": 1.2,        # degrees
-    "confidence": 0.9,
-}
-```
-
-### Frame Data Format
-
-```python
-{
-    "topic": "frame.world",
-    "width": 320,
-    "height": 240,
-    "format": "jpeg",  # Usually JPEG, not raw BGR
-    # Raw bytes in third message part
-}
-```
-
-**JPEG decoding required**:
-```python
-image_data = np.frombuffer(frame_bytes, dtype=np.uint8)
-frame = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
-```
-
-## Session Transcripts
-
-This is a research project. All agent sessions should be logged for later review.
-
-**Transcript location:** `ai-transcripts/` in the repo root.
-
-**Do not read old transcripts** unless the user asks you to or you need the format as a reference. They are for human review, not agent context.
-
-When the user says **"make a transcript"**, write a summary of the current session to `ai-transcripts/YYYY-MM-DD-<topic>.md` following the format of existing transcripts in that folder.
-
-**Format:**
-- Header: date, model, tool, topic
-- Each user prompt reproduced verbatim under `### User`
-- Each assistant response condensed under `### Assistant`: summarize actions taken, key findings, and decisions — don't reproduce full tool output
-- End with a `## Summary of Changes` section listing files modified, key design decisions, and commit hashes
-
 ## Critical Rule: Tracker and Player Parity
 
-**`main.py` (live tracker) and `player.py` (recording player) must always have identical functionality.**
+**`main.py` and `player.py` must always have identical pipeline behaviour.**
 
-Any feature, message, or behaviour added to one must be added to the other in the same session. This includes:
-- New Pd messages sent (e.g. `confidence`, `am_lfo`, `am_amp`)
-- Gating logic (e.g. only send during blink/flutter)
-- Cleanup/reset on exit
-- State variables related to Pd output
+With the patch system, output parity is largely automatic — both use the same `patch.update()` call. But signal bus population must stay in sync:
 
-Do not close a task or end a session with one file updated but not the other.
+- Any new signal added to main.py's bus must be added to player.py too
+- Any new detector initialised in main.py must be initialised (and reset on seek) in player.py
+- `_reset_on_seek()` in player.py must reset all stateful components that main.py resets on startup
 
-## Development Guidelines
+Do not close a task with one file updated but not the other.
 
-### Python Standards
+## Python Standards
 
 - **Package manager**: UV only (not pip, poetry, conda)
 - **Python version**: 3.12+
 - **Type hints**: Required on all functions
 - **Dataclasses**: Use `@dataclass(frozen=True)` for data objects
-- **Protocols**: Use `typing.Protocol` for interfaces (duck typing)
+- **Protocols**: Use `typing.Protocol` for interfaces
 
-### Code Style
+## Session Transcripts
 
-```python
-# Good: Type hints, docstrings, frozen dataclasses
-@dataclass(frozen=True)
-class NoteEvent:
-    """A discrete note trigger event from content-based gaze settling."""
-    timestamp: float
-    note: Note
-    octave: int
-    midi_note: int
-    brightness: float
-    center_x: int
-    center_y: int
+All agent sessions should be logged for later review.
 
-def process(data: GazeData) -> Result:
-    """Process gaze data and return result."""
-    ...
-```
+**Location:** `ai-transcripts/` in the repo root.
 
-### Testing Commands
+**Do not read old transcripts** unless the user asks or you need the format as reference.
+
+When the user says **"make a transcript"**, write a summary to `ai-transcripts/YYYY-MM-DD-<topic>.md` following existing transcript format:
+- Header: date, model, tool, topic
+- Each user prompt verbatim under `### User`
+- Each assistant response condensed under `### Assistant`
+- End with `## Summary of Changes`: files modified, key decisions, commit hashes
+
+## Testing Commands
 
 ```bash
-# Run live tracker with video
+# Live tracker
 uv run pupil-tracker
-
-# Run with Pure Data output
 uv run pupil-tracker --pd
+uv run pupil-tracker --patch color_music --pd --no-video
 
-# Run without video (headless)
-uv run pupil-tracker --no-video --pd
+# Recording playback
+uv run gaze-player recordings/000
+uv run gaze-player recordings/000 --pd
+uv run gaze-player recordings/000 --patch color_music --pd --gamma 0.5
 
-# Play back a recording
-uv run gaze-player /path/to/recording
-
-# Play recording with Pure Data output
-uv run gaze-player /path/to/recording --pd
-
-# Play with gamma correction (for dark footage)
-uv run gaze-player /path/to/recording --gamma 0.5
-
-# Debug connection
+# Utility scripts
 uv run python scripts/debug_connection.py
+uv run python scripts/test_puredata.py
+uv run python scripts/test_color_grid.py --auto
 ```
-
-### Debugging Tips
-
-1. **Always use timeouts** on ZMQ operations
-2. **Use `gtimeout`** when running commands that might hang
-3. **Flush print output**: `print(..., flush=True)`
-4. **Check Pupil Capture**:
-   - Is it running?
-   - Is Frame Publisher enabled?
-   - Are eyes being detected? (gaze confidence > 0)
-
-## External Documentation
-
-### Pupil Core (NOT Neon!)
-
-- **Network API**: https://docs.pupil-labs.com/core/developer/network-api/
-- **Data Format**: https://docs.pupil-labs.com/core/terminology/
-- **Frame Publisher**: https://docs.pupil-labs.com/core/software/pupil-capture/
-
-### Libraries
-
-- **ZeroMQ**: https://zeromq.org/
-- **MessagePack**: https://msgpack.org/
-- **OpenCV Python**: https://docs.opencv.org/4.x/
-
-## Future Work
-
-### Note Mapping Alternatives
-
-The current 7-note color mapping has practical challenges (lighting variations, mixed colors). Consider:
-
-1. **Spatial mapping** - Screen regions = notes (like a visual piano)
-2. **Pentatonic scale** - 5 notes (C,D,E,G,A) with bold colors, always sounds good
-3. **Color markers** - Dedicated colored targets for reliable detection
-4. **Hybrid** - Spatial for pitch, color for expression/timbre
-
-### Sound Refinement
-- Explore different scales/modes
-- Add saturation-based effects (more saturated = more intense sound)
-- Map fixation duration to note length or dynamics
-
-### Object Detection
-- Integrate YOLOv8 or similar for object detection
-- Intersect detected objects with gaze position
-- Map objects to sound characteristics
 
 ## Common Pitfalls
 
-1. **ZMQ buffering** - Always set `RCVHWM=1` and drain buffers
-2. **Coordinate systems** - Pupil uses bottom-left origin, flip Y for OpenCV
-3. **JPEG frames** - World camera sends JPEG, not raw BGR
-4. **Binocular flickering** - Filter to combined gaze or best-confidence eye
-5. **Pastel colors** - Use low saturation threshold (20) to detect them
-7. **Confidence filtering** - Always filter gaze with confidence < 0.5
-8. **Out-of-bounds gaze** - Some gaze values are outside 0-1 range, filter them
+1. **ZMQ buffering** — Always set `RCVHWM=1` and drain buffers
+2. **Coordinate systems** — Pupil uses bottom-left origin, flip Y for OpenCV
+3. **JPEG frames** — World camera sends JPEG, not raw BGR
+4. **Binocular flickering** — Filter to combined gaze or best-confidence eye
+5. **Pastel colours** — Use low saturation threshold (20) to detect them
+6. **Confidence filtering** — Filter gaze with confidence < 0.5
+7. **Out-of-bounds gaze** — Some gaze values fall outside 0–1, filter them
+8. **Patch reset on seek** — player.py's `_reset_on_seek()` must call `patch.reset()`
 
-## Quick Reference
+## External Documentation
 
-```bash
-# Install
-uv sync
+### Pupil Core (NOT Neon)
 
-# Run live tracker
-uv run pupil-tracker
+- Network API: https://docs.pupil-labs.com/core/developer/network-api/
+- Data format: https://docs.pupil-labs.com/core/terminology/
 
-# Run with Pure Data output
-uv run pupil-tracker --pd
+### Libraries
 
-# Run with custom stability settings
-uv run pupil-tracker --pd --note-stability 2 --octave-stability 3
-
-# Play recording
-uv run gaze-player /path/to/recording --pd
-
-# Test Pure Data connection
-uv run python scripts/test_puredata.py
-
-# Debug Pupil connection
-uv run python scripts/debug_connection.py
-```
-
-## Key Files for Note Triggering
-
-If working on note triggering logic:
-
-| File | What's There |
-|------|--------------|
-| `analyzer.py` | NoteGate class, NoteEvent dataclass, ColorAnalyzer |
-| `main.py` | Live tracking loop with NoteGate integration |
-| `player.py` | Recording playback with NoteGate integration |
-| `output.py` | PureDataSink class, sends `note_on` to Pure Data |
+- ZeroMQ: https://zeromq.org/
+- MessagePack: https://msgpack.org/
+- OpenCV Python: https://docs.opencv.org/4.x/

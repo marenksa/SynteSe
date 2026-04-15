@@ -1,50 +1,91 @@
-"""Streaming blink event processing for real-time use.
+"""Blink, flutter, and intentional closure detection.
 
-Pairs blink onset/offset events from Pupil Capture's built-in detector,
-classifies by duration, and detects flutter from rapid blink bursts.
+Handles everything related to eyelid events:
+- Pairing onset/offset events from Pupil Capture into complete blinks
+- Classifying blinks by duration (normal, intentional, ambiguous)
+- Detecting flutter bursts from rapid blink sequences
+- Tracking whether eyes are currently closed (between onset and offset)
+
+The StreamingBlinkTracker is used by main.py for live tracking.
+The same types and constants are used by input/recording.py for playback.
 """
 
 from __future__ import annotations
 
 import time
 from collections import deque
+from dataclasses import dataclass
+from enum import Enum
 
-from pupil_tracker.recording import (
-    BLINK_MAX_MS,
-    FLUTTER_END_TIMEOUT_S,
-    FLUTTER_MIN_BLINKS,
-    FLUTTER_WINDOW_S,
-    INTENTIONAL_MIN_MS,
-    BlinkSample,
-    BlinkType,
-    FlutterEvent,
-    classify_blink,
-)
+# --- Thresholds ---
 
+BLINK_MAX_MS = 400        # Blinks shorter than this are normal blinks
+INTENTIONAL_MIN_MS = 500  # Blinks longer than this are intentional closures
+FLUTTER_WINDOW_S = 1.5    # Sliding window for flutter detection
+FLUTTER_MIN_BLINKS = 4    # Minimum blinks in window to qualify as flutter
+FLUTTER_END_TIMEOUT_S = 0.5  # Flutter ends when no new blink arrives within this time
+
+
+# --- Types ---
+
+class BlinkType(Enum):
+    """Classification of a blink by its duration."""
+    BLINK = "blink"            # < 400ms
+    INTENTIONAL = "intentional"  # >= 500ms
+    AMBIGUOUS = "ambiguous"    # 400–500ms
+
+
+@dataclass
+class BlinkSample:
+    """A blink event paired from onset/offset detections."""
+    timestamp: float          # Onset timestamp
+    duration_ms: float        # Duration in ms (-1 if no offset detected)
+    confidence: float         # Average confidence of onset/offset
+    blink_type: BlinkType = BlinkType.BLINK
+
+
+@dataclass
+class FlutterEvent:
+    """A rapid eye flutter burst detected from rapid blink onsets."""
+    timestamp: float    # Start of the flutter burst
+    duration_s: float   # How long the flutter pattern lasted
+    blink_count: int    # Number of blinks in the burst
+
+
+def classify_blink(duration_ms: float) -> BlinkType:
+    """Classify a blink by its duration."""
+    if duration_ms < 0:
+        return BlinkType.BLINK  # Unpaired onset, assume normal blink
+    if duration_ms <= BLINK_MAX_MS:
+        return BlinkType.BLINK
+    if duration_ms >= INTENTIONAL_MIN_MS:
+        return BlinkType.INTENTIONAL
+    return BlinkType.AMBIGUOUS
+
+
+# --- Detector ---
 
 class StreamingBlinkTracker:
     """Tracks blink onset/offset events in real time.
 
-    - Pairs onset→offset to compute duration
-    - Classifies each blink by duration (blink/intentional/ambiguous)
-    - Detects flutter as 3+ blinks within a 2s sliding window
+    - Pairs onset/offset events to compute duration
+    - Classifies each blink by duration
+    - Detects flutter as FLUTTER_MIN_BLINKS+ blinks within FLUTTER_WINDOW_S
+    - Tracks whether eyes are currently closed (between onset and offset)
     """
 
     def __init__(self) -> None:
-        # Pending onset waiting for its offset
         self._pending_onset_ts: float | None = None
         self._pending_onset_conf: float = 0.0
 
-        # Completed blinks
         self._blink_count = 0
 
-        # Sliding window of blink timestamps for flutter detection
         self._blink_times: deque[float] = deque()
         self._flutter_start: float | None = None
-        self._flutter_start_mono: float = 0.0  # monotonic time of flutter onset
+        self._flutter_start_mono: float = 0.0
         self._flutter_count = 0
-        self._flutter_blink_count = 0  # Blinks accumulated during current flutter
-        self._last_blink_mono: float = 0.0  # monotonic time of most recent blink
+        self._flutter_blink_count = 0
+        self._last_blink_mono: float = 0.0
 
     @property
     def blink_count(self) -> int:
@@ -79,13 +120,10 @@ class StreamingBlinkTracker:
 
         Returns:
             Tuple of (completed_blink, flutter_event).
-            - completed_blink is set when an onset→offset pair completes.
-            - flutter_event is set when a flutter burst ends.
         """
         blink: BlinkSample | None = None
 
         if blink_type == "onset":
-            # If we had a pending onset without offset, emit it as unpaired
             if self._pending_onset_ts is not None:
                 blink = BlinkSample(
                     timestamp=self._pending_onset_ts,
@@ -99,7 +137,6 @@ class StreamingBlinkTracker:
                 if self._flutter_start is not None:
                     self._flutter_blink_count += 1
 
-            # Start new pending onset
             self._pending_onset_ts = timestamp
             self._pending_onset_conf = confidence
 
@@ -120,15 +157,12 @@ class StreamingBlinkTracker:
                     self._flutter_blink_count += 1
                 self._pending_onset_ts = None
 
-        # Check for flutter onset (sliding window)
         self._check_flutter(timestamp)
-
         return blink, None
 
     def tick(self, now_mono: float) -> FlutterEvent | None:
         """Check for flutter end by timeout. Call every loop iteration.
 
-        Flutter ends when no new blink arrives within FLUTTER_END_TIMEOUT_S.
         Returns a FlutterEvent when flutter ends, None otherwise.
         """
         if self._flutter_start is not None:
@@ -146,16 +180,12 @@ class StreamingBlinkTracker:
         return None
 
     def _check_flutter(self, now: float) -> None:
-        """Detect flutter onset from recent blinks (sliding window)."""
-        # Expire old blinks outside the window
         window_start = now - FLUTTER_WINDOW_S
         while self._blink_times and self._blink_times[0] < window_start:
             self._blink_times.popleft()
 
         count = len(self._blink_times)
-
         if count >= FLUTTER_MIN_BLINKS and self._flutter_start is None:
-            # Flutter onset: becomes active immediately at the Nth blink
             self._flutter_start = now
             self._flutter_start_mono = time.monotonic()
             self._flutter_blink_count = count

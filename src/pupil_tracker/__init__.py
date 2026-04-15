@@ -1,22 +1,13 @@
 """Pupil Core color-to-music tracker - map gaze colors to musical notes."""
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent
-from pupil_tracker.client import (
+from pupil_tracker.input.live import (
     FixationData,
     FrameData,
     GazeData,
     Message,
     PupilCaptureClient,
 )
-from pupil_tracker.output import (
-    ColorConsoleSink,
-    MultiSink,
-    NoteEventSink,
-    OutputSink,
-    PureDataSink,
-)
-from pupil_tracker.processor import FrameProcessor, GazeRegion
-from pupil_tracker.recording import (
+from pupil_tracker.input.recording import (
     BlinkSample,
     BlinkType,
     FixationSample,
@@ -25,20 +16,42 @@ from pupil_tracker.recording import (
     Recording,
     RecordingInfo,
 )
+from pupil_tracker.output import (
+    ColorConsoleSink,
+    MultiSink,
+    NoteEventSink,
+    OutputSink,
+    PureDataSink,
+)
+from pupil_tracker.signals.env_color import (
+    ColorAnalyzer,
+    ColorReading,
+    FrameProcessor,
+    GazeRegion,
+    Note,
+    NoteEvent,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
-    # Client
+    # Live input
     "PupilCaptureClient",
     "GazeData",
     "FrameData",
     "FixationData",
     "Message",
-    # Processor
+    # Recording input
+    "Recording",
+    "RecordingInfo",
+    "GazeSample",
+    "BlinkSample",
+    "FixationSample",
+    "BlinkType",
+    "FlutterEvent",
+    # Signals
     "FrameProcessor",
     "GazeRegion",
-    # Analyzer
     "ColorAnalyzer",
     "ColorReading",
     "NoteEvent",
@@ -49,12 +62,4 @@ __all__ = [
     "MultiSink",
     "ColorConsoleSink",
     "PureDataSink",
-    # Recording playback
-    "Recording",
-    "RecordingInfo",
-    "GazeSample",
-    "BlinkSample",
-    "FixationSample",
-    "BlinkType",
-    "FlutterEvent",
 ]

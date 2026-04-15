@@ -3,40 +3,19 @@
 import json
 import logging
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 import cv2
 import msgpack
 import numpy as np
 
+from pupil_tracker.signals.eye_blinks import (
+    BLINK_MAX_MS, FLUTTER_END_TIMEOUT_S, FLUTTER_MIN_BLINKS,
+    FLUTTER_WINDOW_S, INTENTIONAL_MIN_MS,
+    BlinkSample, BlinkType, FlutterEvent, classify_blink,
+)
+
 logger = logging.getLogger(__name__)
-
-# Blink classification thresholds
-BLINK_MAX_MS = 400
-INTENTIONAL_MIN_MS = 500
-
-# Flutter detection from rapid blink bursts
-FLUTTER_WINDOW_S = 1.0  # Sliding window size
-FLUTTER_MIN_BLINKS = 4  # Min blink onsets in window to qualify as flutter
-FLUTTER_END_TIMEOUT_S = 0.5  # End flutter when no new blink arrives within this time
-
-
-class BlinkType(Enum):
-    """Classification of blink events by duration."""
-
-    BLINK = "blink"  # <400ms
-    INTENTIONAL = "intentional"  # >500ms
-    AMBIGUOUS = "ambiguous"  # 400-500ms
-
-
-@dataclass
-class FlutterEvent:
-    """A rapid eye flutter burst detected from rapid blink onsets."""
-
-    timestamp: float  # Start of the flutter burst
-    duration_s: float  # How long the flutter pattern lasted
-    blink_count: int  # Number of blinks in the burst
 
 
 @dataclass
@@ -61,27 +40,6 @@ class GazeSample:
     timestamp: float
     norm_pos: tuple[float, float]  # Normalized position (0-1, origin bottom-left)
     confidence: float
-
-
-def classify_blink(duration_ms: float) -> BlinkType:
-    """Classify a blink by its duration."""
-    if duration_ms < 0:
-        return BlinkType.BLINK  # Unpaired onset, assume normal blink
-    if duration_ms <= BLINK_MAX_MS:
-        return BlinkType.BLINK
-    if duration_ms >= INTENTIONAL_MIN_MS:
-        return BlinkType.INTENTIONAL
-    return BlinkType.AMBIGUOUS
-
-
-@dataclass
-class BlinkSample:
-    """A blink event paired from onset/offset detections."""
-
-    timestamp: float  # Onset timestamp
-    duration_ms: float  # Duration in milliseconds (-1 if no offset detected)
-    confidence: float  # Average confidence of onset/offset
-    blink_type: BlinkType = BlinkType.BLINK  # Classification by duration
 
 
 @dataclass
