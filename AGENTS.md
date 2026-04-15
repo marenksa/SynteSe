@@ -214,13 +214,11 @@ When the user says **"make a transcript"**, write a summary to `ai-transcripts/Y
 ```bash
 # Live tracker
 uv run pupil-tracker
-uv run pupil-tracker --pd
-uv run pupil-tracker --patch color_music --pd --no-video
+uv run pupil-tracker --patch color_music
 
 # Recording playback
 uv run pupil-player recordings/000
-uv run pupil-player recordings/000 --pd
-uv run pupil-player recordings/000 --patch color_music --pd --gamma 0.5
+uv run pupil-player recordings/000 --patch color_music --gamma 0.5
 
 # Utility scripts
 uv run python scripts/debug_connection.py

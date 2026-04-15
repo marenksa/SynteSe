@@ -68,6 +68,7 @@ class PureDataSink:
         self._port = port
         self._socket: socket.socket | None = None
         self._connected = False
+        self._warned = False
 
     def _ensure_connected(self) -> bool:
         if self._connected and self._socket:
@@ -76,10 +77,13 @@ class PureDataSink:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.connect((self._host, self._port))
             self._connected = True
+            self._warned = False
             print(f"[PureData] Connected to {self._host}:{self._port}")
             return True
-        except (ConnectionRefusedError, OSError) as e:
-            print(f"[PureData] Connection failed: {e}")
+        except (ConnectionRefusedError, OSError):
+            if not self._warned:
+                print(f"[PureData] Not available at {self._host}:{self._port} — will retry silently")
+                self._warned = True
             self._socket = None
             self._connected = False
             return False
@@ -107,4 +111,4 @@ class PureDataSink:
             self._socket.close()
             self._socket = None
             self._connected = False
-        print("[PureData] Closed")
+            print("[PureData] Closed")

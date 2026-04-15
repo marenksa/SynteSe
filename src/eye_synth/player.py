@@ -337,10 +337,10 @@ def main() -> None:
                         help="Disable colour/brightness overlay")
     parser.add_argument("--patch", type=str, default="color_music",
                         help="Patch to use for mapping signals to outputs")
-    parser.add_argument("--pd", action="store_true",
-                        help="Send output to Pure Data via FUDI protocol")
-    parser.add_argument("--pd-host", type=str, default="127.0.0.1")
-    parser.add_argument("--pd-port", type=int, default=9001)
+    parser.add_argument("--pd-host", type=str, default="127.0.0.1",
+                        help="Pure Data host (default: 127.0.0.1)")
+    parser.add_argument("--pd-port", type=int, default=9001,
+                        help="Pure Data port (default: 9001)")
     parser.add_argument("--gamma", type=float, default=1.0,
                         help="Gamma correction (< 1.0 brightens)")
 
@@ -352,11 +352,8 @@ def main() -> None:
         sys.exit(1)
 
     show_overlay = not args.no_overlay
-    pipeline = Pipeline() if show_overlay or args.pd else None
-    pd_sink = None
-    if args.pd:
-        pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
-        print(f"Pure Data output enabled: {args.pd_host}:{args.pd_port}")
+    pipeline = Pipeline()
+    pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
 
     patch = load_patch(args.patch)
 
@@ -389,10 +386,9 @@ def main() -> None:
         print("\nInterrupted")
         sys.exit(0)
     finally:
-        if pd_sink is not None:
-            pd_sink.send("confidence", 1.0)
-            pd_sink.send("am_lfo", 0)
-            pd_sink.close()
+        pd_sink.send("confidence", 1.0)
+        pd_sink.send("am_lfo", 0)
+        pd_sink.close()
 
 
 if __name__ == "__main__":

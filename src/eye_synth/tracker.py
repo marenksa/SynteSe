@@ -23,7 +23,6 @@ def run_tracker(
     host: str = "127.0.0.1",
     port: int = 50020,
     verbose: bool = False,
-    pd: bool = False,
     pd_host: str = "127.0.0.1",
     pd_port: int = 9001,
     gamma: float = 1.0,
@@ -33,7 +32,7 @@ def run_tracker(
     pipeline = Pipeline()
     gamma_lut = build_gamma_lut(gamma)
 
-    pd_sink: PureDataSink | None = PureDataSink(host=pd_host, port=pd_port) if pd else None
+    pd_sink = PureDataSink(host=pd_host, port=pd_port)
     outputs = OutputBus(pd_sink)
     patch = load_patch(patch_name)
 
@@ -52,8 +51,7 @@ def run_tracker(
     print("=" * 60)
     print(f"  Host: {host}:{port}")
     print(f"  Patch: {patch_name}")
-    if pd:
-        print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
+    print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
     if gamma != 1.0:
         print(f"  Gamma correction: {gamma}")
     print("=" * 60)
@@ -141,10 +139,9 @@ def run_tracker(
         print("\n[INFO] Interrupted by user.")
     finally:
         console_output.close()
-        if pd_sink is not None:
-            pd_sink.send("confidence", 1.0)
-            pd_sink.send("am_lfo", 0)
-            pd_sink.close()
+        pd_sink.send("confidence", 1.0)
+        pd_sink.send("am_lfo", 0)
+        pd_sink.close()
         cv2.destroyAllWindows()
 
     print("[INFO] Tracker stopped.")
@@ -164,11 +161,10 @@ def main() -> None:
     parser.add_argument("--patch", type=str, default="color_music",
                         help="Patch to use for mapping signals to outputs")
 
-    pd_group = parser.add_argument_group("Pure Data output")
-    pd_group.add_argument("--pd", action="store_true",
-                          help="Send to Pure Data via FUDI protocol (TCP)")
-    pd_group.add_argument("--pd-host", type=str, default="127.0.0.1")
-    pd_group.add_argument("--pd-port", type=int, default=9001)
+    parser.add_argument("--pd-host", type=str, default="127.0.0.1",
+                        help="Pure Data host (default: 127.0.0.1)")
+    parser.add_argument("--pd-port", type=int, default=9001,
+                        help="Pure Data port (default: 9001)")
 
     args = parser.parse_args()
 
@@ -176,7 +172,6 @@ def main() -> None:
         host=args.host,
         port=args.port,
         verbose=args.verbose,
-        pd=args.pd,
         pd_host=args.pd_host,
         pd_port=args.pd_port,
         gamma=args.gamma,

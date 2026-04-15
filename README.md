@@ -31,7 +31,7 @@ uv sync
 # 1. Open Pure Data and load a patch from puredata/
 # 2. Enable DSP in Pure Data (Media → DSP On)
 # 3. Run the tracker:
-uv run pupil-tracker --pd
+uv run pupil-tracker
 ```
 
 The default patch is `color_music`. See [`patches/color_music/README.md`](src/eye_synth/patches/color_music/README.md) for its specific mappings.
@@ -124,8 +124,8 @@ def load_patch(name: str) -> Patch:
 And run it:
 
 ```bash
-uv run pupil-tracker --patch scene_motion --pd
-uv run pupil-player recordings/000 --patch scene_motion --pd
+uv run pupil-tracker --patch scene_motion
+uv run pupil-player recordings/000 --patch scene_motion
 ```
 
 Each patch should have its own `README.md` documenting its specific mappings.
@@ -138,11 +138,8 @@ Test and develop against recorded sessions without needing hardware:
 # Play a recording with gaze overlay
 uv run pupil-player recordings/000
 
-# Send patch output to Pure Data while playing
-uv run pupil-player recordings/000 --pd
-
 # Use a specific patch
-uv run pupil-player recordings/000 --patch color_music --pd
+uv run pupil-player recordings/000 --patch color_music
 
 # Brighten dark footage
 uv run pupil-player recordings/000 --gamma 0.5
@@ -195,7 +192,6 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
 --verbose, -v            Verbose console output
 --gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
 --patch NAME             Patch to use (default: color_music)
---pd                     Send to Pure Data via FUDI/TCP
 --pd-host HOST           Pure Data host (default: 127.0.0.1)
 --pd-port PORT           Pure Data port (default: 9001)
 ```
@@ -207,9 +203,8 @@ recording_path           Path to Pupil Capture recording directory
 --autoplay               Start playing immediately
 --no-overlay             Disable colour/brightness overlay
 --patch NAME             Patch to use (default: color_music)
---pd                     Send to Pure Data
---pd-host HOST           Pure Data host
---pd-port PORT           Pure Data port
+--pd-host HOST           Pure Data host (default: 127.0.0.1)
+--pd-port PORT           Pure Data port (default: 9001)
 --gamma FLOAT            Gamma correction
 ```
 
