@@ -1,30 +1,18 @@
-"""Main entry point for the Pupil Brightness Tracker."""
+"""Main entry point for the Pupil Color-to-Music Tracker."""
 
 import argparse
 import sys
-from pathlib import Path
 
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import (
-    BrightnessAnalyzer,
-    BrightnessReading,
-    ColorAnalyzer,
-    ColorReading,
-    Note,
-)
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
 from pupil_tracker.client import PupilCaptureClient
 from pupil_tracker.output import (
     ColorConsoleSink,
-    ConsoleSink,
-    ConsoleThresholdSink,
-    FileSink,
     MultiSink,
-    PureDataColorFUDISink,
-    PureDataColorSink,
     PureDataFUDISink,
-    PureDataSink,
+    PureDataOSCSink,
 )
 from pupil_tracker.processor import FrameProcessor
 
@@ -166,113 +154,70 @@ def run_tracker(
     port: int = 50020,
     region_size: int = 50,
     smoothing: int = 5,
-    output_file: str | None = None,
     show_video: bool = True,
     verbose: bool = False,
     pd_osc: bool = False,
     pd_fudi: bool = False,
-    pd_color_osc: bool = False,
-    pd_color_fudi: bool = False,
     pd_host: str = "127.0.0.1",
     pd_port: int | None = None,
     note_stability: int = 8,
     octave_stability: int = 15,
     octave_threshold: float = 0.8,
 ) -> None:
-    """Run the brightness tracker.
+    """Run the color-to-music tracker.
 
     Args:
         host: Pupil Capture host address.
         port: Pupil Capture control port.
         region_size: Size of the gaze region to analyze.
         smoothing: Number of frames to average for smoothing.
-        output_file: Optional file path to log data.
         show_video: Whether to display the video feed.
         verbose: Whether to print verbose console output.
-        pd_osc: Enable Pure Data brightness output via OSC.
-        pd_fudi: Enable Pure Data brightness output via FUDI.
-        pd_color_osc: Enable Pure Data color/note output via OSC.
-        pd_color_fudi: Enable Pure Data color/note output via FUDI.
+        pd_osc: Enable Pure Data output via OSC.
+        pd_fudi: Enable Pure Data output via FUDI.
         pd_host: Pure Data host address.
         pd_port: Pure Data port (default: 9000 for OSC, 9001 for FUDI).
-        note_stability: Frames for note stability in color mode.
-        octave_stability: Frames for octave stability in color mode.
+        note_stability: Frames for note stability.
+        octave_stability: Frames for octave stability.
         octave_threshold: Agreement threshold for octave changes (0-1).
     """
-    # Determine if we're using color mode
-    use_color_mode = pd_color_osc or pd_color_fudi
-
     # Initialize components
     processor = FrameProcessor(region_size=region_size)
+    analyzer = ColorAnalyzer(
+        smoothing_window=smoothing,
+        note_stability_frames=note_stability,
+        octave_stability_frames=octave_stability,
+        octave_stability_threshold=octave_threshold,
+    )
 
-    if use_color_mode:
-        color_analyzer = ColorAnalyzer(
-            smoothing_window=smoothing,
-            note_stability_frames=note_stability,
-            octave_stability_frames=octave_stability,
-            octave_stability_threshold=octave_threshold,
-        )
-        color_output = MultiSink()
-        color_output.add_sink(ColorConsoleSink(verbose=verbose))
-
-        if pd_color_osc:
-            osc_port = pd_port if pd_port else 9000
-            color_output.add_sink(PureDataColorSink(host=pd_host, port=osc_port))
-        if pd_color_fudi:
-            fudi_port = pd_port if pd_port else 9001
-            color_output.add_sink(PureDataColorFUDISink(host=pd_host, port=fudi_port))
-    else:
-        color_analyzer = None
-        color_output = None
-
-    # Brightness analyzer (always available)
-    analyzer = BrightnessAnalyzer(smoothing_window=smoothing)
-
-    # Set up brightness output sinks
+    # Set up output sinks
     output = MultiSink()
-    if not use_color_mode:
-        output.add_sink(ConsoleSink(verbose=verbose))
-        output.add_sink(ConsoleThresholdSink(low_threshold=50.0, high_threshold=200.0))
+    output.add_sink(ColorConsoleSink(verbose=verbose))
 
-    if output_file:
-        output.add_sink(FileSink(Path(output_file)))
-
-    # Pure Data brightness outputs
     if pd_osc:
         osc_port = pd_port if pd_port else 9000
-        output.add_sink(PureDataSink(host=pd_host, port=osc_port))
+        output.add_sink(PureDataOSCSink(host=pd_host, port=osc_port))
     if pd_fudi:
         fudi_port = pd_port if pd_port else 9001
         output.add_sink(PureDataFUDISink(host=pd_host, port=fudi_port))
 
     print("=" * 60)
-    if use_color_mode:
-        print("Pupil Color-to-Music Tracker")
-    else:
-        print("Pupil Brightness Tracker")
+    print("Pupil Color-to-Music Tracker")
     print("=" * 60)
     print(f"  Host: {host}:{port}")
     print(f"  Region size: {region_size}px")
     print(f"  Smoothing window: {smoothing} frames")
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
-    if use_color_mode:
-        print("  Mode: COLOR → MUSIC (wavelength-based note mapping)")
-    if output_file:
-        print(f"  Logging to: {output_file}")
+    print("  Mode: COLOR → MUSIC (wavelength-based note mapping)")
     if pd_osc:
-        print(f"  Pure Data brightness (OSC): {pd_host}:{pd_port or 9000}")
+        print(f"  Pure Data (OSC): {pd_host}:{pd_port or 9000}")
     if pd_fudi:
-        print(f"  Pure Data brightness (FUDI): {pd_host}:{pd_port or 9001}")
-    if pd_color_osc:
-        print(f"  Pure Data color/note (OSC): {pd_host}:{pd_port or 9000}")
-    if pd_color_fudi:
-        print(f"  Pure Data color/note (FUDI): {pd_host}:{pd_port or 9001}")
+        print(f"  Pure Data (FUDI): {pd_host}:{pd_port or 9001}")
     print("=" * 60)
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
 
-    last_reading: BrightnessReading | None = None
-    last_color_reading: ColorReading | None = None
+    last_reading: ColorReading | None = None
 
     try:
         with PupilCaptureClient(host=host, port=port) as client:
@@ -288,16 +233,9 @@ def run_tracker(
                     # Extract gaze region and analyze
                     gaze_region = processor.extract_region()
                     if gaze_region is not None:
-                        # Always compute brightness reading (for file logging)
                         reading = analyzer.analyze(gaze_region)
                         output.emit(reading)
                         last_reading = reading
-
-                        # If in color mode, also compute and emit color reading
-                        if color_analyzer is not None and color_output is not None:
-                            color_reading = color_analyzer.analyze(gaze_region)
-                            color_output.emit(color_reading)
-                            last_color_reading = color_reading
 
                     # Display video with overlay
                     if show_video:
@@ -308,15 +246,8 @@ def run_tracker(
                                     frame,
                                     last_reading.smoothed_brightness,
                                 )
-                            # Draw color info when in color mode
-                            if use_color_mode and last_color_reading is not None:
-                                draw_color_info(frame, last_color_reading)
-                            window_title = (
-                                "Pupil Color-to-Music"
-                                if use_color_mode
-                                else "Pupil Brightness Tracker"
-                            )
-                            cv2.imshow(window_title, frame)
+                                draw_color_info(frame, last_reading)
+                            cv2.imshow("Pupil Color-to-Music", frame)
 
                         # Check for quit
                         key = cv2.waitKey(1) & 0xFF
@@ -331,8 +262,6 @@ def run_tracker(
         print("\n[INFO] Interrupted by user.")
     finally:
         output.close()
-        if color_output is not None:
-            color_output.close()
         if show_video:
             cv2.destroyAllWindows()
 
@@ -342,7 +271,7 @@ def run_tracker(
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Stream gaze data from Pupil Core and analyze brightness.",
+        description="Stream gaze data from Pupil Core and map colors to musical notes.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -367,14 +296,7 @@ def main() -> None:
         "--smoothing",
         type=int,
         default=5,
-        help="Number of frames to average for brightness smoothing",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        default=None,
-        help="Output file for brightness data (JSONL or CSV based on extension)",
+        help="Number of frames to average for smoothing",
     )
     parser.add_argument(
         "--no-video",
@@ -388,19 +310,19 @@ def main() -> None:
         help="Enable verbose console output",
     )
 
-    # Color mode stability options
-    stability_group = parser.add_argument_group("Color mode stability")
+    # Stability options
+    stability_group = parser.add_argument_group("Stability tuning")
     stability_group.add_argument(
         "--note-stability",
         type=int,
         default=8,
-        help="Frames for note stability in color mode (lower = faster response)",
+        help="Frames for note stability (lower = faster response)",
     )
     stability_group.add_argument(
         "--octave-stability",
         type=int,
         default=15,
-        help="Frames for octave stability in color mode (higher = more stable)",
+        help="Frames for octave stability (higher = more stable)",
     )
     stability_group.add_argument(
         "--octave-threshold",
@@ -414,22 +336,12 @@ def main() -> None:
     pd_group.add_argument(
         "--pd-osc",
         action="store_true",
-        help="Stream brightness to Pure Data via OSC (requires mrpeach external)",
+        help="Stream to Pure Data via OSC (requires mrpeach external)",
     )
     pd_group.add_argument(
         "--pd-fudi",
         action="store_true",
-        help="Stream brightness to Pure Data via FUDI/TCP (no externals needed)",
-    )
-    pd_group.add_argument(
-        "--pd-color-osc",
-        action="store_true",
-        help="Stream color/note to Pure Data via OSC (use with color_music.pd)",
-    )
-    pd_group.add_argument(
-        "--pd-color-fudi",
-        action="store_true",
-        help="Stream color/note to Pure Data via FUDI/TCP (use with color_music.pd)",
+        help="Stream to Pure Data via FUDI/TCP (no externals needed)",
     )
     pd_group.add_argument(
         "--pd-host",
@@ -451,13 +363,10 @@ def main() -> None:
         port=args.port,
         region_size=args.region_size,
         smoothing=args.smoothing,
-        output_file=args.output,
         show_video=not args.no_video,
         verbose=args.verbose,
         pd_osc=args.pd_osc,
         pd_fudi=args.pd_fudi,
-        pd_color_osc=args.pd_color_osc,
-        pd_color_fudi=args.pd_color_fudi,
         pd_host=args.pd_host,
         pd_port=args.pd_port,
         note_stability=args.note_stability,
@@ -468,4 +377,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

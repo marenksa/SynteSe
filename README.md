@@ -1,14 +1,15 @@
-# Pupil Brightness Tracker
+# Pupil Color-to-Music Tracker
 
-Real-time eye tracking brightness and color analyzer using Pupil Core. Streams gaze and video data from Pupil Capture, analyzes brightness and color at the gaze point, and outputs signals for sound synthesis through Pure Data.
+Real-time eye tracking color-to-music system using Pupil Core. Streams gaze and video data from Pupil Capture, analyzes color at the gaze point, and outputs MIDI notes for sound synthesis through Pure Data.
 
 ## Features
 
-- **Brightness Mode**: Analyze brightness at gaze point, map to pitch (original mode)
-- **Color-to-Music Mode**: Map colors to musical notes based on wavelength physics
+- Map colors to musical notes based on wavelength physics
   - Longer wavelength (red) → lower notes (C)
   - Shorter wavelength (violet) → higher notes (B)
-  - Brightness determines octave (darker = lower octave)
+- Brightness determines octave (darker = lower octave 2-6)
+- Gaussian-weighted spatial averaging (center pixels weigh more)
+- Temporal smoothing with configurable stability
 
 ## Prerequisites
 
@@ -22,38 +23,19 @@ Real-time eye tracking brightness and color analyzer using Pupil Core. Streams g
 This project uses [UV](https://docs.astral.sh/uv/) for dependency management (not pip or poetry).
 
 ```bash
-cd pupil-brightness-tracker
 uv sync
 ```
 
 ## Quick Start
 
 ```bash
-# Run with video display (brightness mode)
-uv run pupil-tracker
-
-# Run without video (console only)
-uv run pupil-tracker --no-video
-
-# Run with verbose output
-uv run pupil-tracker --verbose
-
-# Log data to file
-uv run pupil-tracker -o brightness_data.csv
-```
-
-### Color-to-Music Mode
-
-Stream color data to Pure Data for musical note synthesis:
-
-```bash
 # 1. Open Pure Data and load puredata/color_music.pd
 # 2. Turn on DSP in Pure Data (Media → DSP On)
-# 3. Run the tracker with color mode:
-uv run pupil-tracker --pd-color-fudi
+# 3. Run the tracker:
+uv run pupil-tracker --pd-fudi
 
 # Or use OSC protocol (requires mrpeach external in Pd):
-uv run pupil-tracker --pd-color-osc
+uv run pupil-tracker --pd-osc
 ```
 
 The color-to-music mapping:
@@ -88,14 +70,14 @@ Open the test grid on your screen and look at each square with the glasses to ve
 
 ### Test Pure Data Connection
 
-Test the Pure Data patches without Pupil hardware:
+Test the Pure Data connection without Pupil hardware:
 
 ```bash
-# Test brightness mode (sine wave pattern)
+# Test via FUDI (recommended, no externals needed)
 uv run python scripts/test_puredata.py --fudi
 
-# Test color mode (cycles through colors)
-uv run python scripts/test_puredata.py --color-fudi
+# Test via OSC (requires mrpeach in Pd)
+uv run python scripts/test_puredata.py --osc
 ```
 
 ### Test Color Grid Audio
@@ -120,31 +102,27 @@ This plays two test sequences:
 ## CLI Options
 
 ```
-usage: pupil-tracker [-h] [--host HOST] [--port PORT] [--region-size REGION_SIZE]
-                     [--smoothing SMOOTHING] [--output OUTPUT] [--no-video] [--verbose]
+usage: pupil-tracker [-h] [--host HOST] [--port PORT] [--region-size SIZE]
+                     [--smoothing FRAMES] [--no-video] [--verbose]
                      [--note-stability N] [--octave-stability N] [--octave-threshold T]
-                     [--pd-osc] [--pd-fudi] [--pd-color-osc] [--pd-color-fudi]
-                     [--pd-host HOST] [--pd-port PORT]
+                     [--pd-osc] [--pd-fudi] [--pd-host HOST] [--pd-port PORT]
 
 Options:
   --host HOST              Pupil Capture host address (default: 127.0.0.1)
   --port PORT              Pupil Capture control port (default: 50020)
   --region-size SIZE       Size of gaze region to analyze in pixels (default: 50)
-  --smoothing FRAMES       Number of frames for brightness smoothing (default: 5)
-  --output, -o FILE        Output file for data (JSONL or CSV based on extension)
+  --smoothing FRAMES       Number of frames for smoothing (default: 5)
   --no-video               Disable video display
   --verbose, -v            Enable verbose console output
 
-Color mode stability:
+Stability tuning:
   --note-stability N       Frames for note stability (default: 8, lower = faster)
   --octave-stability N     Frames for octave stability (default: 15, higher = more stable)
   --octave-threshold T     Agreement threshold for octave 0-1 (default: 0.8)
 
 Pure Data output:
-  --pd-osc                 Stream brightness via OSC (use with brightness_receiver.pd)
-  --pd-fudi                Stream brightness via FUDI (use with brightness_simple.pd)
-  --pd-color-osc           Stream color/note via OSC (use with color_music.pd)
-  --pd-color-fudi          Stream color/note via FUDI (use with color_music.pd)
+  --pd-osc                 Stream via OSC (requires mrpeach external)
+  --pd-fudi                Stream via FUDI/TCP (no externals needed)
   --pd-host HOST           Pure Data host address (default: 127.0.0.1)
   --pd-port PORT           Pure Data port (default: 9000 for OSC, 9001 for FUDI)
 ```
@@ -178,19 +156,20 @@ Pure Data output:
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  Brightness Analyzer                        │
-│    • Calculates mean luminance of gaze region               │
-│    • Smooths values over configurable window                │
+│                   Color Analyzer                            │
+│    • HSV color space with Gaussian-weighted averaging       │
+│    • Maps hue to note (C-B) based on wavelength             │
+│    • Maps brightness to octave (2-6)                        │
+│    • Temporal smoothing with stability tracking             │
 │                      analyzer.py                            │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Output Sinks                             │
-│    • ConsoleSink: Real-time brightness bar                  │
-│    • FileSink: JSONL or CSV logging                         │
-│    • ThresholdSink: Triggers on brightness changes          │
-│    • (Future: USBSink for external device control)          │
+│    • ColorConsoleSink: Real-time note/color display         │
+│    • PureDataOSCSink: OSC to Pure Data                      │
+│    • PureDataFUDISink: FUDI/TCP to Pure Data                │
 │                       output.py                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -198,14 +177,12 @@ Pure Data output:
 ## Project Structure
 
 ```
-pupil-brightness-tracker/
+pupil-color-tracker/
 ├── pyproject.toml              # UV project configuration
 ├── README.md                   # This file
 ├── AGENTS.md                   # Instructions for AI agents
 ├── puredata/
-│   ├── brightness_receiver.pd  # OSC-based brightness patch
-│   ├── brightness_simple.pd    # FUDI-based brightness patch
-│   └── color_music.pd          # Color-to-music patch (FUDI)
+│   └── color_music.pd          # Pure Data patch for synthesis
 ├── scripts/
 │   ├── debug_connection.py     # Debug Pupil Capture connection
 │   ├── test_puredata.py        # Test Pure Data communication
@@ -218,7 +195,7 @@ pupil-brightness-tracker/
     ├── __init__.py
     ├── client.py               # ZMQ client for Pupil Capture
     ├── processor.py            # Frame/gaze processing
-    ├── analyzer.py             # Brightness and color analysis
+    ├── analyzer.py             # Color analysis
     ├── output.py               # Output sink interfaces
     └── main.py                 # CLI entry point
 ```

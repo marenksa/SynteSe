@@ -4,25 +4,23 @@ This document provides guidance for AI agents working in this repository.
 
 ## Project Overview
 
-**Goal**: Build a real-time eye tracking system that:
+**Goal**: Build a real-time eye tracking color-to-music system that:
 1. Streams gaze and video data from Pupil Core hardware
-2. Analyzes what the user is looking at (brightness and color detection)
-3. Outputs signals to Pure Data for sound synthesis
+2. Analyzes color at the gaze point (hue → note, brightness → octave)
+3. Outputs MIDI notes to Pure Data for sound synthesis
 
-**Current State**:
-- Brightness tracker working (brightness → pitch)
-- Color-to-music mode working (color → note, brightness → octave)
+**Current State**: Color-to-music mode working (color → note, brightness → octave)
 
 **Future Direction**: Add ML-based object/material classification for more sophisticated gaze-based audio feedback.
 
 ## Architecture
 
 ```
-Pupil Capture (external app) 
-    → ZMQ/MessagePack protocol 
-    → Our Python client 
-    → Processing pipeline 
-    → Output sinks (console/file/USB)
+Pupil Capture (external app)
+    → ZMQ/MessagePack protocol
+    → Our Python client
+    → Processing pipeline
+    → Output sinks (console, Pure Data)
 ```
 
 ### Key Components
@@ -31,17 +29,15 @@ Pupil Capture (external app)
 |------|---------|
 | `client.py` | ZMQ connection to Pupil Capture, message parsing |
 | `processor.py` | Gaze-to-pixel mapping, region extraction |
-| `analyzer.py` | Brightness and color analysis (BrightnessAnalyzer, ColorAnalyzer) |
-| `output.py` | Output sink protocol and implementations (console, file, Pure Data) |
+| `analyzer.py` | Color analysis (ColorAnalyzer) |
+| `output.py` | Output sink protocol and implementations (console, Pure Data) |
 | `main.py` | CLI entry point, main loop |
 
-### Pure Data Patches
+### Pure Data Patch
 
 | File | Purpose |
 |------|---------|
-| `brightness_receiver.pd` | OSC-based brightness → pitch synthesis |
-| `brightness_simple.pd` | FUDI-based brightness → pitch synthesis |
-| `color_music.pd` | FUDI-based color → MIDI note synthesis |
+| `color_music.pd` | MIDI note → frequency synthesis (uses mtof) |
 
 ## Critical Technical Knowledge
 
@@ -52,13 +48,13 @@ The `ColorAnalyzer` maps visible light wavelength to musical notes:
 ```
 Color     Wavelength    OpenCV Hue    Note    Semitone
 ─────────────────────────────────────────────────────
-Red       ~700nm        0-10, 160+    C       0
-Orange    ~620nm        10-25         D       2
-Yellow    ~580nm        25-40         E       4
-Green     ~530nm        40-80         F       5
-Cyan      ~500nm        80-100        G       7
-Blue      ~470nm        100-130       A       9
-Violet    ~400nm        130-160       B       11
+Red       ~700nm        0-8, 165+     C       0
+Orange    ~620nm        8-25          D       2
+Yellow    ~580nm        25-38         E       4
+Green     ~530nm        38-75         F       5
+Cyan      ~500nm        75-95         G       7
+Blue      ~470nm        95-125        A       9
+Violet    ~400nm        125-165       B       11
 ```
 
 Brightness (HSV Value channel) maps to octave 2-6:
@@ -243,21 +239,17 @@ gtimeout 30 uv run pupil-tracker --no-video
 # Install
 uv sync
 
-# Run (brightness mode)
+# Run tracker
 uv run pupil-tracker
 
-# Run with brightness → Pure Data
+# Run with Pure Data output
 uv run pupil-tracker --pd-fudi
 
-# Run color-to-music mode
-uv run pupil-tracker --pd-color-fudi
-
 # Run with options
-uv run pupil-tracker --region-size 100 --smoothing 10 -o data.csv
+uv run pupil-tracker --region-size 100 --smoothing 10
 
 # Test Pure Data connection (without Pupil hardware)
 uv run python scripts/test_puredata.py --fudi
-uv run python scripts/test_puredata.py --color-fudi
 
 # Test color grid (plays all notes systematically)
 uv run python scripts/test_color_grid.py --fudi --auto
@@ -273,8 +265,7 @@ uv run python scripts/debug_connection.py
 
 | Script | Purpose |
 |--------|---------|
-| `test_puredata.py` | Test Pure Data connection with sine wave patterns |
+| `test_puredata.py` | Test Pure Data connection (cycles through colors) |
 | `test_color_grid.py` | Play through entire color-brightness grid (rows then columns) |
 | `generate_test_image.py` | Generate calibration images (7×5 grid + rainbow strip) |
 | `debug_connection.py` | Debug Pupil Capture ZMQ connection |
-

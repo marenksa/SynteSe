@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """Test script to verify Pure Data communication.
 
-This sends fake brightness/color values to Pure Data so you can test the
+This sends fake color/note values to Pure Data so you can test the
 connection and sound generation without the Pupil hardware.
 
 Usage:
-    # Brightness mode - for OSC (requires mrpeach in Pd):
+    # OSC (requires mrpeach in Pd):
     uv run python scripts/test_puredata.py --osc
 
-    # Brightness mode - for FUDI (no externals needed):
+    # FUDI (no externals needed):
     uv run python scripts/test_puredata.py --fudi
 
-    # Color-to-music mode - cycles through colors:
-    uv run python scripts/test_puredata.py --color-fudi
-
-Make sure Pure Data is running with the appropriate patch open first!
+Make sure Pure Data is running with color_music.pd open first!
 """
 
 import argparse
 import math
+import socket
 import time
 
 from pythonosc import udp_client
@@ -40,64 +38,8 @@ def calculate_midi_note(note: int, octave: int) -> int:
 def test_osc(host: str, port: int, duration: float) -> None:
     """Send test OSC messages to Pure Data."""
     print(f"[OSC] Sending to {host}:{port}")
-    print("[OSC] Open 'brightness_receiver.pd' in Pure Data")
+    print("[OSC] Open 'color_music.pd' in Pure Data")
     print("[OSC] Make sure DSP is ON")
-    print()
-
-    client = udp_client.SimpleUDPClient(host, port)
-
-    start = time.time()
-    while time.time() - start < duration:
-        # Generate a sine wave brightness pattern
-        t = time.time() - start
-        brightness = (math.sin(t * 0.5) + 1) / 2  # 0-1 range, slow oscillation
-
-        client.send_message("/brightness", brightness)
-        print(f"\r  Brightness: {brightness:.3f}", end="", flush=True)
-        time.sleep(0.05)  # 20 Hz update rate
-
-    print("\n[OSC] Done!")
-
-
-def test_fudi(host: str, port: int, duration: float) -> None:
-    """Send test FUDI messages to Pure Data."""
-    import socket
-
-    print(f"[FUDI] Connecting to {host}:{port}")
-    print("[FUDI] Open 'brightness_simple.pd' in Pure Data")
-    print("[FUDI] Make sure DSP is ON")
-    print()
-
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((host, port))
-        print("[FUDI] Connected!")
-    except ConnectionRefusedError:
-        print("[FUDI] ERROR: Could not connect. Is Pure Data running with the patch open?")
-        return
-
-    start = time.time()
-    try:
-        while time.time() - start < duration:
-            # Generate a sine wave brightness pattern
-            t = time.time() - start
-            brightness = (math.sin(t * 0.5) + 1) / 2  # 0-1 range
-
-            message = f"brightness {brightness:.4f};\n"
-            sock.send(message.encode("utf-8"))
-            print(f"\r  Brightness: {brightness:.3f}", end="", flush=True)
-            time.sleep(0.05)
-    finally:
-        sock.close()
-
-    print("\n[FUDI] Done!")
-
-
-def test_color_osc(host: str, port: int, duration: float) -> None:
-    """Send test color/MIDI OSC messages to Pure Data."""
-    print(f"[COLOR-OSC] Sending to {host}:{port}")
-    print("[COLOR-OSC] Open 'color_music.pd' in Pure Data")
-    print("[COLOR-OSC] Make sure DSP is ON")
     print()
     print("Cycling through colors (wavelength order)...")
     print()
@@ -132,16 +74,14 @@ def test_color_osc(host: str, port: int, duration: float) -> None:
         )
         time.sleep(0.05)
 
-    print("\n[COLOR-OSC] Done!")
+    print("\n[OSC] Done!")
 
 
-def test_color_fudi(host: str, port: int, duration: float) -> None:
-    """Send test color/MIDI FUDI messages to Pure Data."""
-    import socket
-
-    print(f"[COLOR-FUDI] Connecting to {host}:{port}")
-    print("[COLOR-FUDI] Open 'color_music.pd' in Pure Data")
-    print("[COLOR-FUDI] Make sure DSP is ON")
+def test_fudi(host: str, port: int, duration: float) -> None:
+    """Send test FUDI messages to Pure Data."""
+    print(f"[FUDI] Connecting to {host}:{port}")
+    print("[FUDI] Open 'color_music.pd' in Pure Data")
+    print("[FUDI] Make sure DSP is ON")
     print()
     print("Cycling through colors (wavelength order)...")
     print()
@@ -149,9 +89,9 @@ def test_color_fudi(host: str, port: int, duration: float) -> None:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((host, port))
-        print("[COLOR-FUDI] Connected!")
+        print("[FUDI] Connected!")
     except ConnectionRefusedError:
-        print("[COLOR-FUDI] ERROR: Could not connect. Is Pure Data running with the patch open?")
+        print("[FUDI] ERROR: Could not connect. Is Pure Data running with the patch open?")
         return
 
     start = time.time()
@@ -189,7 +129,7 @@ def test_color_fudi(host: str, port: int, duration: float) -> None:
     finally:
         sock.close()
 
-    print("\n[COLOR-FUDI] Done!")
+    print("\n[FUDI] Done!")
 
 
 def main() -> None:
@@ -199,30 +139,16 @@ def main() -> None:
         epilog=__doc__,
     )
 
-    # Brightness mode options
     parser.add_argument(
         "--osc",
         action="store_true",
-        help="Brightness via OSC (use with brightness_receiver.pd)",
+        help="Send via OSC (requires mrpeach external in Pd)",
     )
     parser.add_argument(
         "--fudi",
         action="store_true",
-        help="Brightness via FUDI (use with brightness_simple.pd)",
+        help="Send via FUDI/TCP (no externals needed)",
     )
-
-    # Color mode options
-    parser.add_argument(
-        "--color-osc",
-        action="store_true",
-        help="Color-to-music via OSC (use with color_music.pd)",
-    )
-    parser.add_argument(
-        "--color-fudi",
-        action="store_true",
-        help="Color-to-music via FUDI (use with color_music.pd)",
-    )
-
     parser.add_argument(
         "--host",
         default="127.0.0.1",
@@ -243,32 +169,20 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if not any([args.osc, args.fudi, args.color_osc, args.color_fudi]):
-        print("Please specify a mode:")
+    if not args.osc and not args.fudi:
+        print("Please specify --osc or --fudi")
         print()
-        print("Brightness mode:")
-        print("  --osc        : Use with 'brightness_receiver.pd' (needs mrpeach)")
-        print("  --fudi       : Use with 'brightness_simple.pd' (no externals)")
-        print()
-        print("Color-to-music mode:")
-        print("  --color-osc  : Use with 'color_music.pd' (needs mrpeach)")
-        print("  --color-fudi : Use with 'color_music.pd' (no externals)")
+        print("  --osc  : Requires mrpeach external in Pure Data")
+        print("  --fudi : No externals needed (recommended)")
         return
 
     if args.osc:
         port = args.port or 9000
         test_osc(args.host, port, args.duration)
-    elif args.fudi:
+    else:
         port = args.port or 9001
         test_fudi(args.host, port, args.duration)
-    elif args.color_osc:
-        port = args.port or 9000
-        test_color_osc(args.host, port, args.duration)
-    elif args.color_fudi:
-        port = args.port or 9001
-        test_color_fudi(args.host, port, args.duration)
 
 
 if __name__ == "__main__":
     main()
-

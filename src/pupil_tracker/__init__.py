@@ -1,14 +1,13 @@
-"""Pupil Core brightness tracker - stream gaze data and analyze brightness at gaze point."""
+"""Pupil Core color-to-music tracker - map gaze colors to musical notes."""
 
-from pupil_tracker.analyzer import BrightnessAnalyzer, BrightnessReading
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
 from pupil_tracker.client import FrameData, GazeData, Message, PupilCaptureClient
 from pupil_tracker.output import (
-    ConsoleSink,
-    ConsoleThresholdSink,
-    FileSink,
+    ColorConsoleSink,
     MultiSink,
     OutputSink,
-    ThresholdSink,
+    PureDataFUDISink,
+    PureDataOSCSink,
 )
 from pupil_tracker.processor import FrameProcessor, GazeRegion
 
@@ -24,13 +23,13 @@ __all__ = [
     "FrameProcessor",
     "GazeRegion",
     # Analyzer
-    "BrightnessAnalyzer",
-    "BrightnessReading",
+    "ColorAnalyzer",
+    "ColorReading",
+    "Note",
     # Output
     "OutputSink",
-    "ConsoleSink",
-    "FileSink",
     "MultiSink",
-    "ThresholdSink",
-    "ConsoleThresholdSink",
+    "ColorConsoleSink",
+    "PureDataOSCSink",
+    "PureDataFUDISink",
 ]
