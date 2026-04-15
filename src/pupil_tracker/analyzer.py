@@ -65,20 +65,106 @@ class ColorReading:
 
 @dataclass(frozen=True)
 class NoteEvent:
-    """A discrete note trigger event from Pupil fixation detection.
+    """A discrete note trigger event from velocity-gated gaze settling.
 
-    Created when a Pupil fixation event occurs, using color analysis
-    to determine the note from the fixation location.
+    Created when the gaze velocity drops below threshold (settling),
+    using color analysis to determine the note at the gaze position.
     """
 
     timestamp: float
-    note: Note  # From hue at fixation position
-    octave: int  # From brightness at fixation position
+    note: Note  # From hue at gaze position
+    octave: int  # From brightness at gaze position
     midi_note: int  # Combined MIDI note
     brightness: float  # For velocity/volume mapping in Pd (0-1 normalized)
     center_x: int
     center_y: int
-    duration_ms: float  # Fixation duration from Pupil
+
+
+@dataclass
+class TriggerState:
+    """State of the last triggered note for spatial+note deduplication."""
+
+    midi_note: int
+    position: tuple[int, int]  # pixel coords of last trigger
+
+
+class NoteTracker:
+    """Decides whether a fixation should trigger a new note.
+
+    Fires when either the note changed or the gaze moved beyond a
+    distance threshold from the last trigger point.
+    """
+
+    def __init__(self, distance_threshold: float = 0.08):
+        # threshold is fraction of frame diagonal
+        self.distance_threshold = distance_threshold
+        self.last_trigger: TriggerState | None = None
+
+    def should_trigger(
+        self,
+        midi_note: int,
+        x: int,
+        y: int,
+        frame_width: int,
+        frame_height: int,
+    ) -> bool:
+        if self.last_trigger is None:
+            return True
+
+        note_changed = midi_note != self.last_trigger.midi_note
+
+        diagonal = (frame_width**2 + frame_height**2) ** 0.5
+        dx = x - self.last_trigger.position[0]
+        dy = y - self.last_trigger.position[1]
+        dist = (dx**2 + dy**2) ** 0.5
+        position_changed = dist > self.distance_threshold * diagonal
+
+        return note_changed or position_changed
+
+    def record_trigger(self, midi_note: int, x: int, y: int) -> None:
+        self.last_trigger = TriggerState(midi_note=midi_note, position=(x, y))
+
+
+class VelocityGate:
+    """Detects when gaze settles by tracking velocity.
+
+    Returns True once when gaze speed drops below threshold for enough
+    consecutive frames (transition from moving to still). Resets when
+    gaze moves fast again, allowing re-trigger on return.
+    """
+
+    def __init__(self, velocity_threshold: float = 0.03, min_settle_frames: int = 3):
+        self.velocity_threshold = velocity_threshold
+        self.min_settle_frames = min_settle_frames
+        self._last_pos: tuple[int, int] | None = None
+        self._slow_count: int = 0
+        self._settled: bool = False
+
+    def update(self, x: int, y: int, frame_width: int, frame_height: int) -> bool:
+        """Feed a new gaze position. Returns True if gaze just settled."""
+        if self._last_pos is None:
+            self._last_pos = (x, y)
+            self._slow_count = 1
+            return False
+
+        diagonal = (frame_width**2 + frame_height**2) ** 0.5
+        dx = x - self._last_pos[0]
+        dy = y - self._last_pos[1]
+        speed = (dx**2 + dy**2) ** 0.5 / diagonal
+
+        self._last_pos = (x, y)
+
+        if speed < self.velocity_threshold:
+            self._slow_count += 1
+        else:
+            self._slow_count = 0
+            self._settled = False
+
+        if self._slow_count >= self.min_settle_frames and not self._settled:
+            self._settled = True
+            return True
+
+        return False
 
 
 class ColorAnalyzer:
