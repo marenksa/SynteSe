@@ -173,8 +173,13 @@ class PureDataFUDISink:
             self._socket = None
 
     def close(self) -> None:
-        """Close the TCP connection."""
-        if self._socket:
+        """Close the TCP connection, sending stop message to silence Pd."""
+        if self._socket and self._connected:
+            try:
+                # Send stop message to silence Pd before disconnecting
+                self._socket.send(b"stop;\n")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             self._socket.close()
             self._socket = None
             self._connected = False
