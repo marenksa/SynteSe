@@ -24,7 +24,7 @@ INTENTIONAL_MIN_MS = 500  # Blinks longer than this are intentional closures
 FLUTTER_WINDOW_S = 1.5    # Sliding window for flutter detection
 FLUTTER_MIN_BLINKS = 3    # Minimum blinks in window to qualify as flutter
 FLUTTER_END_TIMEOUT_S = 0.3  # Flutter ends when no new blink arrives within this time
-ONSET_DEBOUNCE_S = 0.08      # Consecutive onsets within this window = same blink (binocular duplicate)
+ONSET_DEBOUNCE_S = 0.05      # Consecutive onsets within this window = same blink (binocular duplicate)
 
 
 # --- Types ---
@@ -109,6 +109,17 @@ class StreamingBlinkTracker:
     def is_eyes_closed(self) -> bool:
         """True between blink onset and offset (eyes currently closed)."""
         return self._pending_onset_ts is not None
+
+    @property
+    def eyes_closed_elapsed_ms(self) -> float:
+        """Milliseconds since the most recent onset. 0.0 if eyes are open.
+
+        Resets on every new onset, so rapid blinking never accumulates time
+        across multiple blinks the way a patch-side timer would.
+        """
+        if self._pending_onset_ts is None:
+            return 0.0
+        return (time.monotonic() - self._last_onset_mono) * 1000
 
     def update(
         self, blink_type: str, timestamp: float, confidence: float

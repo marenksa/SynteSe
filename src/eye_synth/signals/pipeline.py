@@ -104,6 +104,7 @@ class Pipeline:
             s.eye.flutter = flutter_event
 
         s.eye.is_eyes_closed = self.blink_tracker.is_eyes_closed
+        s.eye.eyes_closed_elapsed_ms = self.blink_tracker.eyes_closed_elapsed_ms
         s.eye.is_flutter_active = self.blink_tracker.is_flutter_active
         s.eye.flutter_blink_count = self.blink_tracker.active_flutter_blink_count
         s.eye.total_blinks = self.blink_tracker.blink_count

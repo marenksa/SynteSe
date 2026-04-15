@@ -16,14 +16,12 @@ Pd messages sent on change:
 
 from __future__ import annotations
 
-import time
-
 from eye_synth.output.overlay import OverlayConfig
 from eye_synth.signals.bus import OutputBus, SignalBus
 
 LATENT_SCALE = 3.0      # output range ±LATENT_SCALE
 VEL_MAX = 800.0         # px/s clamp for velocity → latent
-INTENTIONAL_MS = 400
+INTENTIONAL_MS = 600
 RAMP_DURATION = 3.0     # seconds to ramp intentional -3↔+3
 
 
@@ -49,7 +47,6 @@ class RAVEPatch:
     )
 
     def __init__(self) -> None:
-        self._eyes_closed_since: float | None = None
         self._prev_blink = 0
         self._prev_flutter = 0
         self._prev_intentional = -1          # sentinel: force ramp init on first update
@@ -59,7 +56,6 @@ class RAVEPatch:
         self._int_ramp_from = -LATENT_SCALE
 
     def reset(self) -> None:
-        self._eyes_closed_since = None
         self._prev_blink = 0
         self._prev_flutter = 0
         self._prev_intentional = -1
@@ -90,12 +86,8 @@ class RAVEPatch:
         flutter = int(eye.is_flutter_active)
 
         if eye.is_eyes_closed:
-            if self._eyes_closed_since is None:
-                self._eyes_closed_since = time.monotonic()
-            elapsed_ms = (time.monotonic() - self._eyes_closed_since) * 1000
-            intentional = int(elapsed_ms >= INTENTIONAL_MS)
+            intentional = int(eye.eyes_closed_elapsed_ms >= INTENTIONAL_MS)
         else:
-            self._eyes_closed_since = None
             intentional = 0
 
         if blink != self._prev_blink:

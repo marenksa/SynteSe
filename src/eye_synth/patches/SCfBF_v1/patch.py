@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import time
-
 from eye_synth.output.overlay import OverlayConfig
 from eye_synth.signals.bus import OutputBus, SignalBus
 
-INTENTIONAL_MS = 400  # ms eyes must be closed to count as intentional
+INTENTIONAL_MS = 600  # ms eyes must be closed to count as intentional
 
 
 class ConfidenceStreamPatch:
@@ -29,13 +27,11 @@ class ConfidenceStreamPatch:
     )
 
     def __init__(self) -> None:
-        self._eyes_closed_since: float | None = None
         self._prev_flutter: int = 0
         self._prev_intentional: int = -1  # sentinel: force send on first update
         self._prev_blink: int = 0
 
     def reset(self) -> None:
-        self._eyes_closed_since = None
         self._prev_flutter = 0
         self._prev_intentional = -1  # sentinel: force send on first update after reset
         self._prev_blink = 0
@@ -48,12 +44,8 @@ class ConfidenceStreamPatch:
 
     def update(self, signals: SignalBus, outputs: OutputBus) -> None:
         if signals.eye.is_eyes_closed and not signals.eye.is_flutter_active:
-            if self._eyes_closed_since is None:
-                self._eyes_closed_since = time.monotonic()
-            elapsed_ms = (time.monotonic() - self._eyes_closed_since) * 1000
-            is_intentional = int(elapsed_ms >= INTENTIONAL_MS)
+            is_intentional = int(signals.eye.eyes_closed_elapsed_ms >= INTENTIONAL_MS)
         else:
-            self._eyes_closed_since = None
             is_intentional = 0
 
         flutter = int(signals.eye.is_flutter_active)

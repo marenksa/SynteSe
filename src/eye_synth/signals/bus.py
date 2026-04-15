@@ -19,6 +19,7 @@ class EyeSignals:
 
     # Blink state
     is_eyes_closed: bool = False                  # between onset and offset
+    eyes_closed_elapsed_ms: float = 0.0           # ms since most recent onset (resets per blink)
     blink: BlinkSample | None = None              # non-None for 1 iteration when a blink completes
     total_blinks: int = 0
 
