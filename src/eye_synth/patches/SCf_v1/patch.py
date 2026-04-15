@@ -31,13 +31,13 @@ class ConfidenceStreamPatch:
     def __init__(self) -> None:
         self._eyes_closed_since: float | None = None
         self._prev_flutter: int = 0
-        self._prev_intentional: int = 0
+        self._prev_intentional: int = -1  # sentinel: force send on first update
         self._prev_blink: int = 0
 
     def reset(self) -> None:
         self._eyes_closed_since = None
         self._prev_flutter = 0
-        self._prev_intentional = 0
+        self._prev_intentional = -1  # sentinel: force send on first update after reset
         self._prev_blink = 0
 
     def shutdown(self, outputs: OutputBus) -> None:
