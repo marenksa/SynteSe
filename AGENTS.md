@@ -13,8 +13,10 @@ This document provides guidance for AI agents working in this repository.
 ```
 Pupil Capture (external app)
     → ZMQ/MessagePack
-    → input/live.py      — raw data (gaze, frames, blinks, fixations)
-    → main.py / player.py — populates SignalBus, calls patch each iteration
+    → input/live.py        — raw data (gaze, frames, blinks, fixations)
+    → tracker.py           — live entry point
+    → player.py            — recording entry point
+    → signals/pipeline.py  — owns detectors, populates SignalBus each iteration
 
 SignalBus (signals/bus.py)
     eye.*   — confidence, position, velocity, blinks, flutter, fixation_id
@@ -32,15 +34,16 @@ OutputBus (signals/bus.py)
 |------|---------|
 | `input/live.py` | ZMQ connection to Pupil Capture, parses gaze/frame/blink/fixation |
 | `input/recording.py` | Loads Pupil recordings (gaze, fixations, blinks, flutter, video) |
+| `signals/pipeline.py` | Pipeline: owns all detectors, populates SignalBus each iteration |
 | `signals/env_color.py` | Colour analysis (ColorAnalyzer, FrameProcessor), NoteGate, NoteEvent |
 | `signals/env_scene_change.py` | Full-frame change magnitude |
 | `signals/eye_blinks.py` | Streaming blink/flutter detection, BlinkType, constants |
 | `signals/eye_gaze.py` | Gaze speed in px/s |
 | `signals/bus.py` | SignalBus, EyeSignals, EnvSignals, OutputBus |
 | `output/sinks.py` | PureDataSink (FUDI/TCP), ColorConsoleSink, MultiSink |
-| `output/overlay.py` | Stateless drawing functions (shared by main.py and player.py) |
-| `main.py` | Live tracker: populates SignalBus, calls patch |
-| `player.py` | Recording player: same pipeline, same patch |
+| `output/overlay.py` | Stateless drawing functions (shared by tracker.py and player.py) |
+| `tracker.py` | Live entry point: gamma → pipeline.process_live() → overlay → patch |
+| `player.py` | Recording entry point: pipeline.process_recording_frame() → patch |
 | `patches/__init__.py` | Patch protocol + load_patch() factory |
 | `patches/color_music/` | Prototype: hue→note, brightness→octave, flutter→AM-LFO |
 
@@ -73,10 +76,12 @@ OutputBus (signals/bus.py)
 
 ### Data Flow Per Loop Iteration
 
+Both entry points call `Pipeline.process_live()` or `Pipeline.process_recording_frame()`, which does:
+
 ```
 signals.clear_events()
 
-if gaze message:    → signals.eye.confidence, norm_pos
+if gaze:            → signals.eye.confidence, norm_pos
 if fixation:        → signals.eye.fixation_id
 if blink:           → signals.eye.blink, is_eyes_closed, is_flutter_active
 blink_tracker.tick: → signals.eye.flutter (on burst end)
@@ -87,7 +92,7 @@ if frame:
     gaze velocity   → signals.eye.velocity_px_s, px_pos
     signals.has_env_reading = True
 
-patch.update(signals, outputs)   ← called every iteration
+patch.update(signals, outputs)   ← called by tracker.py / player.py after pipeline
 ```
 
 ### Writing a Patch
@@ -130,7 +135,7 @@ Uses Pupil Capture's built-in blink detector (onset/offset events), not confiden
 
 **Flutter**: 4+ blinks in a 1.5s sliding window. Ends after 0.5s with no new blink.
 
-Real-time uses `StreamingBlinkTracker` (`signals/eye_blinks.py`). Recording playback reads from `recording.blink_data` and detects flutter transitions via `_prev_in_flutter` in player.py.
+Real-time uses `StreamingBlinkTracker` (`signals/eye_blinks.py`). Recording playback reads pre-classified blink/flutter data from the recording file; `Pipeline.process_recording_frame()` handles flutter transition detection internally.
 
 ### Colour-to-Note Mapping
 
@@ -172,15 +177,13 @@ pixel_y = int((1.0 - norm_y) * height)
 
 ## Critical Rule: Tracker and Player Parity
 
-**`main.py` and `player.py` must always have identical pipeline behaviour.**
+**`tracker.py` and `player.py` must produce identical signal behaviour for the same input.**
 
-With the patch system, output parity is largely automatic — both use the same `patch.update()` call. But signal bus population must stay in sync:
+Parity is now largely enforced by `Pipeline` — both entry points call the same detectors through the same class. Adding a new signal means adding it to `Pipeline`, not separately to both files.
 
-- Any new signal added to main.py's bus must be added to player.py too
-- Any new detector initialised in main.py must be initialised (and reset on seek) in player.py
-- `_reset_on_seek()` in player.py must reset all stateful components that main.py resets on startup
-
-Do not close a task with one file updated but not the other.
+The remaining parity obligation:
+- Any new detector added to `Pipeline` must be reset in `Pipeline.reset()`
+- `player.py`'s `_reset_on_seek()` calls `pipeline.reset()` — keep that call in place
 
 ## Python Standards
 
@@ -213,9 +216,9 @@ uv run pupil-tracker --pd
 uv run pupil-tracker --patch color_music --pd --no-video
 
 # Recording playback
-uv run gaze-player recordings/000
-uv run gaze-player recordings/000 --pd
-uv run gaze-player recordings/000 --patch color_music --pd --gamma 0.5
+uv run pupil-player recordings/000
+uv run pupil-player recordings/000 --pd
+uv run pupil-player recordings/000 --patch color_music --pd --gamma 0.5
 
 # Utility scripts
 uv run python scripts/debug_connection.py

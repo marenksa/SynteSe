@@ -5,7 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from pupil_tracker.signals.env_color import ColorReading, Note
+from eye_synth.signals.env_color import ColorReading, Note
 
 
 NOTE_BGR_COLORS: dict[Note, tuple[int, int, int]] = {

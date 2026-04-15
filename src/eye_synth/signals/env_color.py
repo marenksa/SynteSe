@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from pupil_tracker.input.live import FrameData, GazeData
+from eye_synth.input.live import FrameData, GazeData
 
 
 # ---------------------------------------------------------------------------

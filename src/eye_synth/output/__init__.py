@@ -1,11 +1,11 @@
-from pupil_tracker.output.sinks import (
+from eye_synth.output.sinks import (
     ColorConsoleSink,
     MultiSink,
     NoteEventSink,
     OutputSink,
     PureDataSink,
 )
-from pupil_tracker.output.overlay import (
+from eye_synth.output.overlay import (
     NOTE_BGR_COLORS,
     NOTE_COLOR_NAMES,
     apply_gamma,

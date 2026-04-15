@@ -1,13 +1,13 @@
 """Pupil Core color-to-music tracker - map gaze colors to musical notes."""
 
-from pupil_tracker.input.live import (
+from eye_synth.input.live import (
     FixationData,
     FrameData,
     GazeData,
     Message,
     PupilCaptureClient,
 )
-from pupil_tracker.input.recording import (
+from eye_synth.input.recording import (
     BlinkSample,
     BlinkType,
     FixationSample,
@@ -16,14 +16,14 @@ from pupil_tracker.input.recording import (
     Recording,
     RecordingInfo,
 )
-from pupil_tracker.output import (
+from eye_synth.output import (
     ColorConsoleSink,
     MultiSink,
     NoteEventSink,
     OutputSink,
     PureDataSink,
 )
-from pupil_tracker.signals.env_color import (
+from eye_synth.signals.env_color import (
     ColorAnalyzer,
     ColorReading,
     FrameProcessor,

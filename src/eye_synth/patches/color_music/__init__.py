@@ -12,9 +12,9 @@ To make a new prototype, copy this file and change what's in update().
 
 from __future__ import annotations
 
-from pupil_tracker.signals.env_color import NoteGate
-from pupil_tracker.signals.eye_blinks import FLUTTER_MIN_BLINKS, BlinkType
-from pupil_tracker.signals.bus import OutputBus, SignalBus
+from eye_synth.signals.env_color import NoteGate
+from eye_synth.signals.eye_blinks import FLUTTER_MIN_BLINKS, BlinkType
+from eye_synth.signals.bus import OutputBus, SignalBus
 
 
 def flutter_to_lfo(blink_count: int, min_blinks: int, max_hz: float = 50.0) -> float:

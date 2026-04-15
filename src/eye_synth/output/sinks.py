@@ -3,8 +3,8 @@
 import socket
 from typing import Protocol
 
-from pupil_tracker.output.overlay import NOTE_COLOR_NAMES
-from pupil_tracker.signals.env_color import ColorReading, NoteEvent
+from eye_synth.output.overlay import NOTE_COLOR_NAMES
+from eye_synth.signals.env_color import ColorReading, NoteEvent
 
 
 class OutputSink(Protocol):

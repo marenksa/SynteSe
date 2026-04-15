@@ -9,7 +9,7 @@ import cv2
 import msgpack
 import numpy as np
 
-from pupil_tracker.signals.eye_blinks import (
+from eye_synth.signals.eye_blinks import (
     BLINK_MAX_MS, FLUTTER_END_TIMEOUT_S, FLUTTER_MIN_BLINKS,
     FLUTTER_WINDOW_S, INTENTIONAL_MIN_MS,
     BlinkSample, BlinkType, FlutterEvent, classify_blink,

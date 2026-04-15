@@ -1,44 +1,26 @@
-"""Video player with gaze overlay for Pupil Capture recordings."""
+"""Video player entry point for Pupil Capture recordings."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
-from pupil_tracker.input.recording import FlutterEvent, Recording
-from pupil_tracker.output import (
+from eye_synth.input.recording import Recording
+from eye_synth.output import (
     MultiSink, PureDataSink,
     apply_gamma, build_gamma_lut,
     draw_brightness_bar, draw_color_info, draw_eye_panel,
     draw_gaze_crosshair, draw_region_box,
 )
-from pupil_tracker.patches import Patch, load_patch
-from pupil_tracker.signals.bus import OutputBus, SignalBus
-from pupil_tracker.signals.env_color import ColorAnalyzer, ColorReading
-from pupil_tracker.signals.env_scene_change import SceneChangeDetector
-from pupil_tracker.signals.eye_gaze import GazeVelocityTracker
+from eye_synth.patches import Patch, load_patch
+from eye_synth.signals.bus import OutputBus
+from eye_synth.signals.pipeline import Pipeline
 
-if TYPE_CHECKING:
-    from pupil_tracker.input.recording import GazeSample
-
-
-@dataclass
-class GazeRegionCompat:
-    """Compatibility wrapper to match FrameProcessor.GazeRegion interface."""
-    center_x: int
-    center_y: int
-    region: np.ndarray
-    frame_width: int
-    frame_height: int
-    timestamp: float
-    confidence: float
 
 
 class GazeVideoPlayer:
@@ -47,7 +29,7 @@ class GazeVideoPlayer:
     def __init__(
         self,
         recording: Recording,
-        analyzer: ColorAnalyzer | None = None,
+        pipeline: Pipeline | None = None,
         output: MultiSink | None = None,
         pd_sink: PureDataSink | None = None,
         patch: Patch | None = None,
@@ -56,7 +38,7 @@ class GazeVideoPlayer:
         gamma: float = 1.0,
     ):
         self.recording = recording
-        self.analyzer = analyzer
+        self.pipeline = pipeline
         self.output = output
         self.region_size = region_size
         self.show_overlay = show_overlay
@@ -64,7 +46,6 @@ class GazeVideoPlayer:
         self.frame_index = 0
         self.playing = False
         self.playback_speed = 1.0
-        self.last_reading: ColorReading | None = None
 
         self._gamma_lut = build_gamma_lut(gamma)
 
@@ -76,58 +57,24 @@ class GazeVideoPlayer:
         self.confidence_threshold = 0.6
         self.window_name = f"Gaze Player - {recording.recording_name}"
 
-        # Signal pipeline
-        self._signals = SignalBus()
         self._outputs = OutputBus(pd_sink)
         self._patch = patch if patch is not None else load_patch("color_music")
-        self._scene_detector = SceneChangeDetector()
-        self._gaze_vel = GazeVelocityTracker()
-
-        # Flutter transition tracking (recording has no streaming tracker)
-        self._prev_in_flutter = False
-        self._last_flutter_event: FlutterEvent | None = None
 
         # Blink/flutter display state
         self._blink_flash_until = 0.0
         self._last_blink_label: str | None = None
         self._flutter_flash_until = 0.0
-        self._last_flutter: FlutterEvent | None = None
+        self._last_flutter_event = None
 
     def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
         if self.gamma == 1.0:
             return frame
         return apply_gamma(frame, self._gamma_lut)
 
-    def extract_region(
-        self, frame: np.ndarray, gaze: GazeSample
-    ) -> GazeRegionCompat | None:
-        height, width = frame.shape[:2]
-        gaze_x, gaze_y = self.recording.gaze_to_pixel(gaze, width, height)
-
-        half_size = self.region_size // 2
-        x1 = max(0, gaze_x - half_size)
-        y1 = max(0, gaze_y - half_size)
-        x2 = min(width, gaze_x + half_size)
-        y2 = min(height, gaze_y + half_size)
-
-        if x2 <= x1 or y2 <= y1:
-            return None
-
-        region = frame[y1:y2, x1:x2]
-        return GazeRegionCompat(
-            center_x=gaze_x,
-            center_y=gaze_y,
-            region=region,
-            frame_width=width,
-            frame_height=height,
-            timestamp=gaze.timestamp,
-            confidence=gaze.confidence,
-        )
-
     def draw_color_info(self, frame: np.ndarray) -> np.ndarray:
-        if self.last_reading is None:
+        if self.pipeline is None or self.pipeline.last_color_reading is None:
             return frame
-        reading = self.last_reading
+        reading = self.pipeline.last_color_reading
         draw_brightness_bar(frame, reading.smoothed_brightness, x=10, y=80)
         draw_color_info(frame, reading, x=10, y=30)
         return frame
@@ -163,12 +110,12 @@ class GazeVideoPlayer:
         flutter = self.recording.get_flutter_at_timestamp(world_ts)
         if flutter is not None:
             self._flutter_flash_until = world_ts + 0.2
-            self._last_flutter = flutter
+            self._last_flutter_event = flutter
         is_flutter = world_ts < self._flutter_flash_until
 
         flutter_label = None
-        if is_flutter and self._last_flutter is not None:
-            flutter_label = f"FLUTTER {self._last_flutter.blink_count} blinks"
+        if is_flutter and self._last_flutter_event is not None:
+            flutter_label = f"FLUTTER {self._last_flutter_event.blink_count} blinks"
 
         draw_eye_panel(
             frame,
@@ -243,13 +190,10 @@ class GazeVideoPlayer:
         """Reset all stateful components after a seek."""
         self._blink_flash_until = 0.0
         self._flutter_flash_until = 0.0
-        self._prev_in_flutter = False
         self._last_flutter_event = None
-        self._scene_detector.reset()
-        self._gaze_vel.reset()
+        if self.pipeline is not None:
+            self.pipeline.reset()
         self._patch.reset()
-        if self.analyzer is not None:
-            self.analyzer.reset()
 
     def run(self) -> None:
         """Run the interactive video player."""
@@ -295,79 +239,31 @@ class GazeVideoPlayer:
             current_frame = self.apply_gamma(current_frame)
 
             # --- Analysis and patch dispatch (only when playing) ---
-            if self.analyzer is not None and self.playing:
+            if self.pipeline is not None and self.playing:
                 world_ts = self.recording.get_frame_timestamp(self.frame_index)
                 gaze = self.recording.get_gaze_for_frame(self.frame_index)
                 blink = self.recording.get_blink_at_timestamp(world_ts)
                 flutter = self.recording.get_flutter_at_timestamp(world_ts)
                 fixation = self.recording.get_fixation_for_frame(self.frame_index)
-                in_flutter = flutter is not None
 
-                # --- Build signal bus ---
-                self._signals.clear_events()
-                self._signals.timestamp = world_ts
-                self._signals.frame_width = current_frame.shape[1]
-                self._signals.frame_height = current_frame.shape[0]
-
-                # Eye signals
+                gaze_px = None
                 if gaze is not None:
-                    self._signals.eye.confidence = gaze.confidence
-                    self._signals.eye.norm_pos = gaze.norm_pos
-                    px = self.recording.gaze_to_pixel(
+                    gaze_px = self.recording.gaze_to_pixel(
                         gaze, current_frame.shape[1], current_frame.shape[0]
                     )
-                    self._signals.eye.px_pos = px
-                    self._gaze_vel.update(
-                        gaze.norm_pos, gaze.timestamp,
-                        current_frame.shape[1], current_frame.shape[0],
-                    )
-                    self._signals.eye.velocity_px_s = self._gaze_vel.velocity
 
-                if blink is not None:
-                    self._signals.eye.blink = blink
-                self._signals.eye.is_eyes_closed = blink is not None
+                signals = self.pipeline.process_recording_frame(
+                    current_frame, gaze, blink, flutter, fixation, world_ts,
+                    gaze_px=gaze_px,
+                    min_confidence=self.confidence_threshold,
+                )
+                signals.eye.total_blinks = len(self.recording.blink_data)
+                signals.eye.total_flutters = len(self.recording.flutter_data)
 
-                if fixation is not None:
-                    self._signals.eye.fixation_id = fixation.id
+                if signals.has_env_reading and self.output is not None and self.pipeline.last_color_reading is not None:
+                    self.output.emit(self.pipeline.last_color_reading)
 
-                # Flutter: detect end transition
-                if self._prev_in_flutter and not in_flutter and self._last_flutter_event is not None:
-                    self._signals.eye.flutter = self._last_flutter_event
-                self._signals.eye.is_flutter_active = in_flutter
-                self._signals.eye.flutter_blink_count = flutter.blink_count if flutter else 0
-                if in_flutter and flutter is not None:
-                    self._last_flutter_event = flutter
-                self._prev_in_flutter = in_flutter
-
-                self._signals.eye.total_blinks = len(self.recording.blink_data)
-                self._signals.eye.total_flutters = len(self.recording.flutter_data)
-
-                # Env signals
-                self._signals.env.scene_change = self._scene_detector.update(current_frame)
-
-                if gaze is not None and gaze.confidence >= self.confidence_threshold:
-                    region = self.extract_region(current_frame, gaze)
-                    if region is not None:
-                        color_reading = self.analyzer.analyze(region)
-                        self.last_reading = color_reading
-                        if self.output is not None:
-                            self.output.emit(color_reading)
-
-                        self._signals.env.hue = color_reading.smoothed_hue
-                        self._signals.env.hue_normalized = color_reading.smoothed_hue / 179.0
-                        self._signals.env.saturation = color_reading.saturation
-                        self._signals.env.brightness = color_reading.smoothed_brightness
-                        self._signals.env.brightness_normalized = (
-                            color_reading.smoothed_brightness / 255.0
-                        )
-                        self._signals.env.note = color_reading.note
-                        self._signals.env.octave = color_reading.octave
-                        self._signals.env.midi_note = color_reading.midi_note
-                        self._signals.env.raw_midi_note = color_reading.raw_midi_note
-                        self._signals.has_env_reading = True
-
-                # --- Dispatch to patch ---
-                self._patch.update(self._signals, self._outputs)
+                self._patch.update(signals, self._outputs)
 
             # --- Draw overlays ---
             display_frame = current_frame.copy()
@@ -431,7 +327,7 @@ class GazeVideoPlayer:
 
 
 def main() -> None:
-    """Main entry point for the gaze video player."""
+    """CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Video player with gaze overlay for Pupil Capture recordings"
     )
@@ -458,7 +354,7 @@ def main() -> None:
         sys.exit(1)
 
     show_overlay = args.overlay or args.pd
-    analyzer = ColorAnalyzer() if show_overlay else None
+    pipeline = Pipeline(region_size=args.region_size) if show_overlay else None
     pd_sink = None
     if args.pd:
         pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
@@ -479,7 +375,7 @@ def main() -> None:
 
             player = GazeVideoPlayer(
                 recording,
-                analyzer=analyzer,
+                pipeline=pipeline,
                 pd_sink=pd_sink,
                 patch=patch,
                 region_size=args.region_size,

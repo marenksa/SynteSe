@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pupil_tracker.signals.env_color import Note
-from pupil_tracker.signals.eye_blinks import BlinkSample, FlutterEvent
+from eye_synth.signals.env_color import Note
+from eye_synth.signals.eye_blinks import BlinkSample, FlutterEvent
 
 
 @dataclass

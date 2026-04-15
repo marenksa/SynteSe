@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from pupil_tracker.signals.bus import OutputBus, SignalBus
+from eye_synth.signals.bus import OutputBus, SignalBus
 
 
 class Patch(Protocol):
@@ -34,7 +34,7 @@ def load_patch(name: str) -> Patch:
         color_music  —  hue→note, brightness→octave, flutter→AM-LFO
     """
     if name == "color_music":
-        from pupil_tracker.patches.color_music import ColorMusicPatch
+        from eye_synth.patches.color_music import ColorMusicPatch
         return ColorMusicPatch()
     raise ValueError(
         f"Unknown patch: {name!r}. Available patches: color_music"

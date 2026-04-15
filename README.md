@@ -33,7 +33,7 @@ uv sync
 uv run pupil-tracker --pd
 ```
 
-The default patch is `color_music`. See [`patches/color_music/README.md`](src/pupil_tracker/patches/color_music/README.md) for its specific mappings.
+The default patch is `color_music`. See [`patches/color_music/README.md`](src/eye_synth/patches/color_music/README.md) for its specific mappings.
 
 ## Available Signals
 
@@ -118,7 +118,7 @@ Then register it in `patches/__init__.py`:
 def load_patch(name: str) -> Patch:
     ...
     if name == "scene_motion":
-        from pupil_tracker.patches.scene_motion import SceneMotionPatch
+        from eye_synth.patches.scene_motion import SceneMotionPatch
         return SceneMotionPatch()
 ```
 
@@ -126,7 +126,7 @@ And run it:
 
 ```bash
 uv run pupil-tracker --patch scene_motion --pd
-uv run gaze-player recordings/000 --patch scene_motion --pd
+uv run pupil-player recordings/000 --patch scene_motion --pd
 ```
 
 Each patch should have its own `README.md` documenting its specific mappings.
@@ -137,16 +137,16 @@ Test and develop against recorded sessions without needing hardware:
 
 ```bash
 # Play a recording with gaze overlay
-uv run gaze-player recordings/000
+uv run pupil-player recordings/000
 
 # Send patch output to Pure Data while playing
-uv run gaze-player recordings/000 --pd
+uv run pupil-player recordings/000 --pd
 
 # Use a specific patch
-uv run gaze-player recordings/000 --patch color_music --pd
+uv run pupil-player recordings/000 --patch color_music --pd
 
 # Brighten dark footage
-uv run gaze-player recordings/000 --gamma 0.5
+uv run pupil-player recordings/000 --gamma 0.5
 ```
 
 Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump), H (help), Q (quit).
@@ -161,14 +161,15 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
 │   ├── debug_connection.py
 │   ├── test_puredata.py
 │   └── test_color_grid.py
-└── src/pupil_tracker/
-    ├── main.py                     # Live tracker entry point
-    ├── player.py                   # Recording player entry point
+└── src/eye_synth/
+    ├── tracker.py                  # Live tracker entry point (pupil-tracker)
+    ├── player.py                   # Recording player entry point (pupil-player)
     ├── input/
     │   ├── live.py                 # ZMQ connection to Pupil Capture
     │   └── recording.py            # Recording loader + playback support
     ├── signals/
     │   ├── bus.py                  # SignalBus, OutputBus
+    │   ├── pipeline.py             # Pipeline: owns detectors, populates SignalBus
     │   ├── env_color.py            # Colour analysis, NoteGate (hue→note, brightness→octave)
     │   ├── env_scene_change.py     # Full-frame change detection
     │   ├── eye_blinks.py           # Blink/flutter detection, types, constants
@@ -208,7 +209,7 @@ Pure Data output:
   --pd-port PORT           Pure Data port (default: 9001)
 ```
 
-### `gaze-player`
+### `pupil-player`
 
 ```
 recording_path           Path to Pupil Capture recording directory
