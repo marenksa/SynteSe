@@ -64,16 +64,21 @@ class GazeVideoPlayer:
         output: MultiSink | None = None,
         region_size: int = 50,
         show_overlay: bool = False,
+        gamma: float = 1.0,
     ):
         self.recording = recording
         self.analyzer = analyzer
         self.output = output
         self.region_size = region_size
         self.show_overlay = show_overlay
+        self.gamma = gamma
         self.frame_index = 0
         self.playing = False
         self.playback_speed = 1.0
         self.last_reading: ColorReading | None = None
+
+        # Build gamma lookup table for performance
+        self._gamma_lut = self._build_gamma_lut(gamma)
 
         # Display settings
         self.gaze_radius = 20
@@ -84,6 +89,25 @@ class GazeVideoPlayer:
 
         # Window name
         self.window_name = f"Gaze Player - {recording.recording_name}"
+
+    def _build_gamma_lut(self, gamma: float) -> np.ndarray:
+        """Build a lookup table for gamma correction.
+
+        gamma < 1.0 brightens the image (e.g., 0.5)
+        gamma > 1.0 darkens the image (e.g., 2.0)
+        """
+        if gamma == 1.0:
+            return np.arange(256, dtype=np.uint8)
+        return np.array(
+            [((i / 255.0) ** gamma) * 255 for i in range(256)],
+            dtype=np.uint8,
+        )
+
+    def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
+        """Apply gamma correction to a frame using lookup table."""
+        if self.gamma == 1.0:
+            return frame
+        return cv2.LUT(frame, self._gamma_lut)
 
     def extract_region(
         self, frame: np.ndarray, gaze: GazeSample
@@ -299,15 +323,18 @@ class GazeVideoPlayer:
             actual_index, current_frame = result
             self.frame_index = actual_index
 
-            # Color analysis if enabled
-            if self.analyzer is not None:
+            # Apply gamma correction to brighten dark footage
+            current_frame = self.apply_gamma(current_frame)
+
+            # Color analysis if enabled (only when playing to avoid smoothing lag)
+            if self.analyzer is not None and self.playing:
                 gaze = self.recording.get_gaze_for_frame(self.frame_index)
                 if gaze is not None and gaze.confidence >= self.confidence_threshold:
                     region = self.extract_region(current_frame, gaze)
                     if region is not None:
                         reading = self.analyzer.analyze(region)
                         self.last_reading = reading
-                        if self.output is not None and self.playing:
+                        if self.output is not None:
                             self.output.emit(reading)
 
             # Draw overlays
@@ -428,6 +455,13 @@ def main() -> None:
         default=50,
         help="Size of gaze region to analyze (default: 50)",
     )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=1.0,
+        help="Gamma correction value. Values < 1.0 brighten the image (e.g., 0.5), "
+        "values > 1.0 darken it. Default: 1.0 (no correction)",
+    )
 
     args = parser.parse_args()
 
@@ -461,12 +495,16 @@ def main() -> None:
             print(f"  Frames: {info.frame_count}")
             print(f"  Gaze samples: {info.gaze_count}")
 
+            if args.gamma != 1.0:
+                print(f"  Gamma correction: {args.gamma}")
+
             player = GazeVideoPlayer(
                 recording,
                 analyzer=analyzer,
                 output=output,
                 region_size=args.region_size,
                 show_overlay=show_overlay,
+                gamma=args.gamma,
             )
             player.frame_index = args.start_frame
             player.playing = args.autoplay
