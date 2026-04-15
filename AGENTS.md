@@ -6,12 +6,14 @@ This document provides guidance for AI agents working in this repository.
 
 **Goal**: Build a real-time eye tracking system that:
 1. Streams gaze and video data from Pupil Core hardware
-2. Analyzes what the user is looking at (currently: brightness detection)
-3. Outputs signals to external devices based on gaze analysis
+2. Analyzes what the user is looking at (brightness and color detection)
+3. Outputs signals to Pure Data for sound synthesis
 
-**Current State**: MVP brightness tracker is working. The system detects brightness at the user's gaze point in real-time.
+**Current State**:
+- Brightness tracker working (brightness → pitch)
+- Color-to-music mode working (color → note, brightness → octave)
 
-**Future Direction**: Replace brightness analysis with ML-based object/material classification, then stream classification signals to external devices (e.g., via USB).
+**Future Direction**: Add ML-based object/material classification for more sophisticated gaze-based audio feedback.
 
 ## Architecture
 
@@ -29,11 +31,60 @@ Pupil Capture (external app)
 |------|---------|
 | `client.py` | ZMQ connection to Pupil Capture, message parsing |
 | `processor.py` | Gaze-to-pixel mapping, region extraction |
-| `analyzer.py` | Brightness calculation (replace with ML later) |
-| `output.py` | Output sink protocol and implementations |
+| `analyzer.py` | Brightness and color analysis (BrightnessAnalyzer, ColorAnalyzer) |
+| `output.py` | Output sink protocol and implementations (console, file, Pure Data) |
 | `main.py` | CLI entry point, main loop |
 
+### Pure Data Patches
+
+| File | Purpose |
+|------|---------|
+| `brightness_receiver.pd` | OSC-based brightness → pitch synthesis |
+| `brightness_simple.pd` | FUDI-based brightness → pitch synthesis |
+| `color_music.pd` | FUDI-based color → MIDI note synthesis |
+
 ## Critical Technical Knowledge
+
+### Color-to-Music Mapping
+
+The `ColorAnalyzer` maps visible light wavelength to musical notes:
+
+```
+Color     Wavelength    OpenCV Hue    Note    Semitone
+─────────────────────────────────────────────────────
+Red       ~700nm        0-10, 160+    C       0
+Orange    ~620nm        10-25         D       2
+Yellow    ~580nm        25-40         E       4
+Green     ~530nm        40-80         F       5
+Cyan      ~500nm        80-100        G       7
+Blue      ~470nm        100-130       A       9
+Violet    ~400nm        130-160       B       11
+```
+
+Brightness (HSV Value channel) maps to octave 2-6:
+- 0-51 → Octave 2
+- 51-102 → Octave 3
+- 102-153 → Octave 4
+- 153-204 → Octave 5
+- 204-255 → Octave 6
+
+MIDI note calculation: `midi = (octave + 1) * 12 + semitone`
+
+### Note/Octave Stability
+
+To prevent jarring jumps, note and octave detection use separate stability tracking:
+
+| Parameter | Note | Octave |
+|-----------|------|--------|
+| Frames | 8 | 15 |
+| Threshold | 70% | 80% |
+| Min agreement | 6/8 | 12/15 |
+
+- **Note stability**: Faster response (8 frames, 70% threshold)
+- **Octave stability**: Slower response (15 frames, 80% threshold) to avoid jarring octave jumps
+- **Saturation threshold**: Pixels with saturation < 50 are excluded from hue calculation (gray pixels have unreliable hue)
+
+Configurable via CLI: `--note-stability`, `--octave-stability`, `--octave-threshold`
 
 ### ZMQ Real-Time Streaming
 
@@ -162,19 +213,20 @@ gtimeout 30 uv run pupil-tracker --no-video
 
 ## Future Work
 
-### Phase 1: Object Detection (Next)
+### Phase 1: Sound Refinement
+- Add more sophisticated synthesis in Pure Data (filters, ADSR envelopes)
+- Explore different scales/modes beyond major scale
+- Add saturation-based effects (more saturated = more intense sound)
+
+### Phase 2: Object Detection
 - Integrate YOLOv8 or similar for object detection
 - Intersect detected objects with gaze position
-- Classify what user is looking at
+- Map objects to sound characteristics
 
-### Phase 2: Custom Classification
+### Phase 3: Custom Classification
 - Train custom model for specific materials/surfaces
 - Collect labeled training data from gaze sessions
-
-### Phase 3: USB Output
-- Implement `USBSink` in `output.py`
-- Serial protocol for external device communication
-- Real-time signal streaming based on classification
+- Material-based sound textures
 
 ## Common Pitfalls
 
@@ -191,13 +243,38 @@ gtimeout 30 uv run pupil-tracker --no-video
 # Install
 uv sync
 
-# Run
+# Run (brightness mode)
 uv run pupil-tracker
+
+# Run with brightness → Pure Data
+uv run pupil-tracker --pd-fudi
+
+# Run color-to-music mode
+uv run pupil-tracker --pd-color-fudi
 
 # Run with options
 uv run pupil-tracker --region-size 100 --smoothing 10 -o data.csv
 
-# Debug
+# Test Pure Data connection (without Pupil hardware)
+uv run python scripts/test_puredata.py --fudi
+uv run python scripts/test_puredata.py --color-fudi
+
+# Test color grid (plays all notes systematically)
+uv run python scripts/test_color_grid.py --fudi --auto
+
+# Generate calibration test images
+uv run python scripts/generate_test_image.py
+
+# Debug Pupil connection
 uv run python scripts/debug_connection.py
 ```
+
+## Test Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `test_puredata.py` | Test Pure Data connection with sine wave patterns |
+| `test_color_grid.py` | Play through entire color-brightness grid (rows then columns) |
+| `generate_test_image.py` | Generate calibration images (7×5 grid + rainbow strip) |
+| `debug_connection.py` | Debug Pupil Capture ZMQ connection |
 
