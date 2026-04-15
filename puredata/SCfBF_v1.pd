@@ -84,6 +84,7 @@
 #X msg 692 426 50;
 #X obj 692 378 sel 1;
 #X text 627 399 BPM /2;
+#X text 722 426 fade-out;
 #X connect 6 0 40 0;
 #X connect 8 0 54 0;
 #X connect 10 0 32 0;

@@ -29,7 +29,7 @@ def load_patch(name: str) -> Patch:
     Available patches:
         TNC_v1     —  hue→note, brightness→octave, flutter→effect
         TgSqC_v1   —  hue→color ID (1–7), stability→PD toggle
-        SCf_v1     —  eye confidence stream → PD confidence signal
+        SCfBF_v1   —  eye confidence stream → PD confidence signal
     """
     if name == "TNC_v1":
         from eye_synth.patches.TNC_v1 import ColorMusicPatch
@@ -37,9 +37,9 @@ def load_patch(name: str) -> Patch:
     if name == "TgSqC_v1":
         from eye_synth.patches.TgSqC_v1 import ColorTogglePatch
         return ColorTogglePatch()
-    if name == "SCf_v1":
-        from eye_synth.patches.SCf_v1 import ConfidenceStreamPatch
+    if name == "SCfBF_v1":
+        from eye_synth.patches.SCfBF_v1 import ConfidenceStreamPatch
         return ConfidenceStreamPatch()
     raise ValueError(
-        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1, SCf_v1"
+        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1, SCfBF_v1"
     )
