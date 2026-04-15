@@ -51,6 +51,23 @@ Brightness maps to octave (2-6): darker = lower octave, brighter = higher octave
 
 ## Testing & Calibration
 
+### Playback Recordings
+
+Test with Pupil Capture recordings without needing the hardware:
+
+```bash
+# Play a recording with gaze overlay
+uv run gaze-player recordings/000
+
+# Send color-to-music to Pure Data while playing
+uv run gaze-player recordings/000 --pd
+
+# Brighten dark footage with gamma correction
+uv run gaze-player recordings/000 --gamma 0.5
+```
+
+Controls: Space (play/pause), arrow keys (frame step), H (help), Q (quit).
+
 ### Test Images
 
 Generate calibration images to verify color detection:
