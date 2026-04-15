@@ -153,10 +153,6 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
 ├── puredata/                       # Pure Data synthesis patches
 │   └── color_music.pd
 ├── recordings/                     # Pupil Capture recordings
-├── scripts/
-│   ├── debug_connection.py
-│   ├── test_puredata.py
-│   └── test_color_grid.py
 └── src/eye_synth/
     ├── tracker.py                  # Live tracker entry point (pupil-tracker)
     ├── player.py                   # Recording player entry point (pupil-player)
