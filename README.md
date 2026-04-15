@@ -1,25 +1,16 @@
 # Eye Tracking Music System
 
-Real-time eye tracking system for building audiovisual prototypes with Pupil Core. Detects signals from the environment (colour, brightness, scene changes) and from the eyes (gaze position, confidence, blinks, flutter, velocity) and routes them to sound synthesis through Pure Data.
+Eye tracking system for building audiovisual prototypes with Pupil Core. Run live with the tracker or from recorded sessions with the player — both are full performance modes. Detects signals from the environment (colour, brightness, scene changes) and from the eyes (gaze position, confidence, blinks, flutter, velocity) and routes them to sound synthesis through Pure Data.
 
-## Design Philosophy
+## Installation
 
-The system is split into two layers:
-
-- **Detectors** — extract signals from the camera and eye tracker. They run the same way regardless of what you're building.
-- **Patches** — map those signals to sound. Each prototype is its own patch file.
-
-This means experimenting with a new musical idea means writing a new patch, not touching any detection code. See [Writing a New Patch](#writing-a-new-patch).
-
-## Prerequisites
+### Prerequisites
 
 1. **Pupil Core** hardware connected via USB
 2. **Pupil Capture** running with administrator privileges and **Frame Publisher plugin** enabled
    - Run Pupil Capture as admin (required for USB camera access on some systems)
    - Plugin Manager → Enable "Frame Publisher"
 3. **Pure Data** for sound synthesis
-
-## Installation
 
 ```bash
 uv sync
@@ -30,17 +21,91 @@ uv sync
 ```bash
 # 1. Open Pure Data and load a patch from puredata/
 # 2. Enable DSP in Pure Data (Media → DSP On)
-# 3. Run the tracker:
+
+# Run live with Pupil Core hardware:
 uv run pupil-tracker
+
+# Or run from a recording:
+uv run pupil-player recordings/000
 ```
+
+Player controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump), H (help), Q (quit).
 
 The default patch is `color_music`. See [`patches/color_music/README.md`](src/eye_synth/patches/color_music/README.md) for its specific mappings.
 
-## Available Signals
+## CLI Reference
+
+### Common flags
+
+Both commands share these flags:
+
+```
+--patch NAME             Patch to use (default: color_music)
+--pd-host HOST           Pure Data host (default: 127.0.0.1)
+--pd-port PORT           Pure Data port (default: 9001)
+--gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
+--verbose, -v            Verbose console output
+--no-overlay             Disable colour/brightness overlay
+```
+
+### `pupil-tracker`
+
+```
+--host HOST              Pupil Capture host (default: 127.0.0.1)
+--port PORT              Pupil Capture port (default: 50020)
+```
+
+### `pupil-player`
+
+```
+recording_path           Path to Pupil Capture recording directory
+```
+
+## Project Structure
+
+```
+├── puredata/                       # Pure Data synthesis patches
+│   └── color_music.pd
+├── recordings/                     # Pupil Capture recordings
+└── src/eye_synth/
+    ├── tracker.py                  # Live tracker entry point (pupil-tracker)
+    ├── player.py                   # Recording player entry point (pupil-player)
+    ├── input/
+    │   ├── live.py                 # ZMQ connection to Pupil Capture
+    │   └── recording.py            # Recording loader + playback support
+    ├── signals/
+    │   ├── bus.py                  # SignalBus, OutputBus
+    │   ├── pipeline.py             # Pipeline: owns detectors, populates SignalBus
+    │   ├── env_color.py            # Colour analysis (raw HSV extraction)
+    │   ├── env_scene_change.py     # Full-frame change detection
+    │   ├── eye_blinks.py           # Blink/flutter detection, types, constants
+    │   └── eye_gaze.py             # Gaze velocity
+    ├── output/
+    │   ├── sinks.py                # PureDataSink, ColorConsoleSink, MultiSink
+    │   └── overlay.py              # Stateless drawing functions
+    └── patches/
+        ├── base.py                 # Patch protocol + load_patch()
+        └── color_music/            # Prototype: colour→MIDI note
+            ├── mapping.py          # Note, NoteMapper, hue/brightness constants
+            ├── gate.py             # NoteGate
+            ├── patch.py            # ColorMusicPatch
+            └── README.md
+```
+
+## Writing a New Patch
+
+The system is split into two layers:
+
+- **Detectors** — extract signals from the camera and eye tracker. They run the same way regardless of what you're building.
+- **Patches** — map those signals to sound. Each prototype is its own patch file.
+
+This means experimenting with a new musical idea means writing a new patch, not touching any detection code.
+
+### Available Signals
 
 Every loop iteration, detectors populate a `SignalBus` that patches can read from.
 
-### Eye signals
+#### Eye signals
 
 | Signal | Type | Description |
 |--------|------|-------------|
@@ -58,7 +123,7 @@ Every loop iteration, detectors populate a `SignalBus` that patches can read fro
 Blink types: `BLINK` (<400ms), `INTENTIONAL` (≥500ms), `AMBIGUOUS` (400–500ms).
 Flutter threshold: 4+ blinks within 1.5s.
 
-### Environment signals
+#### Environment signals
 
 | Signal | Type | Description |
 |--------|------|-------------|
@@ -72,9 +137,7 @@ Flutter threshold: 4+ blinks within 1.5s.
 
 `signals.has_env_reading` is True only when a gaze region was successfully analysed on this iteration.
 
-Note/octave/MIDI mapping is prototype-specific. See `patches/color_music/` for an example using `NoteMapper` and `NoteGate`.
-
-## Writing a New Patch
+### Patch structure
 
 A patch is a class with two methods:
 
@@ -129,80 +192,6 @@ uv run pupil-player recordings/000 --patch scene_motion
 ```
 
 Each patch should have its own `README.md` documenting its specific mappings.
-
-## Playback
-
-Test and develop against recorded sessions without needing hardware:
-
-```bash
-# Play a recording with gaze overlay
-uv run pupil-player recordings/000
-
-# Use a specific patch
-uv run pupil-player recordings/000 --patch color_music
-
-# Brighten dark footage
-uv run pupil-player recordings/000 --gamma 0.5
-```
-
-Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump), H (help), Q (quit).
-
-## Project Structure
-
-```
-├── puredata/                       # Pure Data synthesis patches
-│   └── color_music.pd
-├── recordings/                     # Pupil Capture recordings
-└── src/eye_synth/
-    ├── tracker.py                  # Live tracker entry point (pupil-tracker)
-    ├── player.py                   # Recording player entry point (pupil-player)
-    ├── input/
-    │   ├── live.py                 # ZMQ connection to Pupil Capture
-    │   └── recording.py            # Recording loader + playback support
-    ├── signals/
-    │   ├── bus.py                  # SignalBus, OutputBus
-    │   ├── pipeline.py             # Pipeline: owns detectors, populates SignalBus
-    │   ├── env_color.py            # Colour analysis (raw HSV extraction)
-    │   ├── env_scene_change.py     # Full-frame change detection
-    │   ├── eye_blinks.py           # Blink/flutter detection, types, constants
-    │   └── eye_gaze.py             # Gaze velocity
-    ├── output/
-    │   ├── sinks.py                # PureDataSink, ColorConsoleSink, MultiSink
-    │   └── overlay.py              # Stateless drawing functions
-    └── patches/
-        ├── base.py                 # Patch protocol + load_patch()
-        └── color_music/            # Prototype: colour→MIDI note
-            ├── mapping.py          # Note, NoteMapper, hue/brightness constants
-            ├── gate.py             # NoteGate
-            ├── patch.py            # ColorMusicPatch
-            └── README.md
-```
-
-## CLI Reference
-
-### `pupil-tracker`
-
-```
---host HOST              Pupil Capture host (default: 127.0.0.1)
---port PORT              Pupil Capture port (default: 50020)
---verbose, -v            Verbose console output
---gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
---patch NAME             Patch to use (default: color_music)
---pd-host HOST           Pure Data host (default: 127.0.0.1)
---pd-port PORT           Pure Data port (default: 9001)
-```
-
-### `pupil-player`
-
-```
-recording_path           Path to Pupil Capture recording directory
---autoplay               Start playing immediately
---no-overlay             Disable colour/brightness overlay
---patch NAME             Patch to use (default: color_music)
---pd-host HOST           Pure Data host (default: 127.0.0.1)
---pd-port PORT           Pure Data port (default: 9001)
---gamma FLOAT            Gamma correction
-```
 
 ## Troubleshooting
 

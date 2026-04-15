@@ -27,6 +27,7 @@ def run_tracker(
     pd_port: int = 9001,
     gamma: float = 1.0,
     patch_name: str = "color_music",
+    show_overlay: bool = True,
 ) -> None:
     """Run the color-to-music tracker."""
     pipeline = Pipeline()
@@ -108,7 +109,7 @@ def run_tracker(
                         draw_gaze_crosshair(display, gx, gy, pipeline.processor.last_gaze.confidence)
                         draw_region_box(display, gx, gy, region_size, pipeline.processor.last_gaze.confidence)
 
-                    if pipeline.last_color_reading is not None:
+                    if show_overlay and pipeline.last_color_reading is not None:
                         draw_brightness_bar(display, pipeline.last_color_reading.smoothed_brightness)
                         draw_color_info(display, pipeline.last_color_reading)
 
@@ -165,6 +166,8 @@ def main() -> None:
                         help="Pure Data host (default: 127.0.0.1)")
     parser.add_argument("--pd-port", type=int, default=9001,
                         help="Pure Data port (default: 9001)")
+    parser.add_argument("--no-overlay", action="store_true",
+                        help="Disable colour/brightness overlay")
 
     args = parser.parse_args()
 
@@ -176,6 +179,7 @@ def main() -> None:
         pd_port=args.pd_port,
         gamma=args.gamma,
         patch_name=args.patch,
+        show_overlay=not args.no_overlay,
     )
 
 

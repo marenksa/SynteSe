@@ -12,7 +12,7 @@ import numpy as np
 
 from eye_synth.input.recording import Recording
 from eye_synth.output import (
-    MultiSink, PureDataSink,
+    ColorConsoleSink, MultiSink, PureDataSink,
     apply_gamma, build_gamma_lut,
     draw_brightness_bar, draw_color_info, draw_eye_panel,
     draw_gaze_crosshair, draw_region_box,
@@ -332,7 +332,7 @@ def main() -> None:
         description="Video player with gaze overlay for Pupil Capture recordings"
     )
     parser.add_argument("recording_path", type=str)
-    parser.add_argument("--autoplay", action="store_true")
+    parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--no-overlay", action="store_true",
                         help="Disable colour/brightness overlay")
     parser.add_argument("--patch", type=str, default="color_music",
@@ -357,6 +357,11 @@ def main() -> None:
 
     patch = load_patch(args.patch)
 
+    output: MultiSink | None = None
+    if args.verbose:
+        output = MultiSink()
+        output.add_sink(ColorConsoleSink(verbose=True))
+
     try:
         with Recording(recording_path) as recording:
             info = recording.get_info()
@@ -371,12 +376,12 @@ def main() -> None:
             player = GazeVideoPlayer(
                 recording,
                 pipeline=pipeline,
+                output=output,
                 pd_sink=pd_sink,
                 patch=patch,
                 show_overlay=show_overlay,
                 gamma=args.gamma,
             )
-            player.playing = args.autoplay
             player.run()
 
     except FileNotFoundError as e:
