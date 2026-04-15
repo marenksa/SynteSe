@@ -61,19 +61,17 @@ Flutter threshold: 4+ blinks within 1.5s.
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `env.hue` | `float` 0–179 | OpenCV hue at gaze point |
+| `env.hue` | `float` 0–179 | OpenCV hue at gaze point (temporally smoothed) |
+| `env.raw_hue` | `float \| None` | Instantaneous hue (pre-smoothing); None if saturation too low |
 | `env.hue_normalized` | `float` 0–1 | Normalised hue |
 | `env.saturation` | `float` 0–255 | Colour saturation at gaze point |
-| `env.brightness` | `float` 0–255 | Brightness at gaze point |
+| `env.brightness` | `float` 0–255 | Brightness at gaze point (smoothed) |
 | `env.brightness_normalized` | `float` 0–1 | Normalised brightness |
-| `env.note` | `Note` | Derived musical note (C–B) |
-| `env.octave` | `int` 3–6 | Derived octave from brightness |
-| `env.midi_note` | `int` | Derived MIDI note number |
-| `env.raw_midi_note` | `int` | Pre-stability MIDI note (for transition detection) |
-| `env.region_changed` | `bool` | True for one iteration when gaze content changes |
 | `env.scene_change` | `float` 0–1 | Full-frame change magnitude (head movement, cuts) |
 
 `signals.has_env_reading` is True only when a gaze region was successfully analysed on this iteration.
+
+Note/octave/MIDI mapping is prototype-specific. See `patches/color_music/` for an example using `NoteMapper` and `NoteGate`.
 
 ## Writing a New Patch
 
@@ -199,11 +197,7 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
 --patch NAME             Patch to use (default: color_music)
 
 Stability tuning:
-  --note-stability N       Frames for note stability (default: 2)
-  --octave-stability N     Frames for octave stability (default: 3)
-  --octave-threshold T     Agreement threshold 0–1 (default: 0.5)
-
-Pure Data output:
+  Pure Data output:
   --pd                     Send to Pure Data via FUDI/TCP
   --pd-host HOST           Pure Data host (default: 127.0.0.1)
   --pd-port PORT           Pure Data port (default: 9001)

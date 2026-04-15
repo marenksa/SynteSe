@@ -1,4 +1,4 @@
-"""Pupil Core color-to-music tracker - map gaze colors to musical notes."""
+"""Pupil Core eye-tracking music system — map gaze signals to sound."""
 
 from eye_synth.input.live import (
     FixationData,
@@ -19,7 +19,6 @@ from eye_synth.input.recording import (
 from eye_synth.output import (
     ColorConsoleSink,
     MultiSink,
-    NoteEventSink,
     OutputSink,
     PureDataSink,
 )
@@ -28,8 +27,6 @@ from eye_synth.signals.env_color import (
     ColorReading,
     FrameProcessor,
     GazeRegion,
-    Note,
-    NoteEvent,
 )
 
 __version__ = "0.1.0"
@@ -54,11 +51,8 @@ __all__ = [
     "GazeRegion",
     "ColorAnalyzer",
     "ColorReading",
-    "NoteEvent",
-    "Note",
     # Output
     "OutputSink",
-    "NoteEventSink",
     "MultiSink",
     "ColorConsoleSink",
     "PureDataSink",

@@ -5,28 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from eye_synth.signals.env_color import ColorReading, Note
-
-
-NOTE_BGR_COLORS: dict[Note, tuple[int, int, int]] = {
-    Note.C: (60, 60, 220),
-    Note.D: (60, 140, 255),
-    Note.E: (60, 220, 255),
-    Note.F: (60, 180, 60),
-    Note.G: (180, 180, 60),
-    Note.A: (220, 120, 60),
-    Note.B: (180, 60, 180),
-}
-
-NOTE_COLOR_NAMES: dict[Note, str] = {
-    Note.C: "Red",
-    Note.D: "Orange",
-    Note.E: "Yellow",
-    Note.F: "Green",
-    Note.G: "Cyan",
-    Note.A: "Blue",
-    Note.B: "Violet",
-}
+from eye_synth.signals.env_color import ColorReading
 
 
 def draw_brightness_bar(
@@ -56,18 +35,19 @@ def draw_color_info(
     y: int = 60,
     size: int = 40,
 ) -> None:
-    note = color_reading.note
-    octave = color_reading.octave
-    color = NOTE_BGR_COLORS.get(note, (128, 128, 128))
-    color_name = NOTE_COLOR_NAMES.get(note, "?")
+    # Derive a display color from the smoothed hue
+    hsv_pixel = np.uint8([[[int(color_reading.smoothed_hue), 200, 200]]])
+    bgr = cv2.cvtColor(hsv_pixel, cv2.COLOR_HSV2BGR)[0][0]
+    color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
 
     cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
     cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
-    cv2.putText(frame, f"{note.name}{octave}", (x + size + 10, y + 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(frame, color_name, (x + size + 10, y + size - 5),
+    hue_str = f"{color_reading.hue:.0f}" if color_reading.hue is not None else "N/A"
+    cv2.putText(frame, f"H:{hue_str}", (x + size + 10, y + 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, f"S:{color_reading.saturation:.0f}", (x + size + 10, y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-    cv2.putText(frame, f"MIDI: {color_reading.midi_note}", (x + size + 80, y + 18),
+    cv2.putText(frame, f"V:{color_reading.smoothed_brightness:.0f}", (x + size + 10, y + size - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 
 

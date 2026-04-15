@@ -3,17 +3,11 @@
 import socket
 from typing import Protocol
 
-from eye_synth.output.overlay import NOTE_COLOR_NAMES
-from eye_synth.signals.env_color import ColorReading, NoteEvent
+from eye_synth.signals.env_color import ColorReading
 
 
 class OutputSink(Protocol):
     def emit(self, reading: ColorReading) -> None: ...
-    def close(self) -> None: ...
-
-
-class NoteEventSink(Protocol):
-    def emit(self, event: NoteEvent) -> None: ...
     def close(self) -> None: ...
 
 
@@ -42,24 +36,17 @@ class ColorConsoleSink:
         self._verbose = verbose
 
     def emit(self, reading: ColorReading) -> None:
-        note_name = reading.note.name
-        color_name = NOTE_COLOR_NAMES.get(reading.note, "Unknown")
-
+        hue_str = f"{reading.hue:.0f}" if reading.hue is not None else "N/A"
         if self._verbose:
-            hue_str = f"{reading.hue:.0f}" if reading.hue is not None else "N/A"
             print(
                 f"[{reading.timestamp:.3f}] "
-                f"Note: {note_name}{reading.octave} (MIDI {reading.midi_note}) "
-                f"Color: {color_name} (H:{hue_str} S:{reading.saturation:.0f}) "
-                f"Brightness: {reading.brightness:.1f} "
+                f"H:{hue_str} S:{reading.saturation:.0f} V:{reading.smoothed_brightness:.0f} "
                 f"@ ({reading.center_x}, {reading.center_y}) "
                 f"conf: {reading.confidence:.2f}"
             )
         else:
             print(
-                f"\rNote: {note_name}{reading.octave} ({color_name:7}) "
-                f"MIDI: {reading.midi_note:3d} "
-                f"Brightness: {reading.smoothed_brightness:5.1f}",
+                f"\rHue:{hue_str:>5} Sat:{reading.saturation:5.1f} Brightness:{reading.smoothed_brightness:5.1f}",
                 end="", flush=True,
             )
 
@@ -114,10 +101,6 @@ class PureDataSink:
             return
         parts = " ".join(str(v) if isinstance(v, int) else f"{v:.4f}" for v in values)
         self._send(f"{key} {parts};\n")
-
-    def emit(self, event: NoteEvent) -> None:
-        """Send a NoteEvent as a note_on message."""
-        self.send("note_on", event.midi_note, event.brightness)
 
     def close(self) -> None:
         if self._socket and self._connected:

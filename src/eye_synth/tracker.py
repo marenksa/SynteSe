@@ -29,9 +29,6 @@ def run_tracker(
     pd: bool = False,
     pd_host: str = "127.0.0.1",
     pd_port: int = 9001,
-    note_stability: int = 2,
-    octave_stability: int = 3,
-    octave_threshold: float = 0.5,
     gamma: float = 1.0,
     patch_name: str = "color_music",
 ) -> None:
@@ -39,9 +36,6 @@ def run_tracker(
     pipeline = Pipeline(
         region_size=region_size,
         smoothing=smoothing,
-        note_stability=note_stability,
-        octave_stability=octave_stability,
-        octave_threshold=octave_threshold,
     )
     gamma_lut = build_gamma_lut(gamma)
 
@@ -185,11 +179,6 @@ def main() -> None:
     parser.add_argument("--patch", type=str, default="color_music",
                         help="Patch to use for mapping signals to outputs")
 
-    stability_group = parser.add_argument_group("Stability tuning")
-    stability_group.add_argument("--note-stability", type=int, default=2)
-    stability_group.add_argument("--octave-stability", type=int, default=3)
-    stability_group.add_argument("--octave-threshold", type=float, default=0.5)
-
     pd_group = parser.add_argument_group("Pure Data output")
     pd_group.add_argument("--pd", action="store_true",
                           help="Send to Pure Data via FUDI protocol (TCP)")
@@ -208,9 +197,6 @@ def main() -> None:
         pd=args.pd,
         pd_host=args.pd_host,
         pd_port=args.pd_port,
-        note_stability=args.note_stability,
-        octave_stability=args.octave_stability,
-        octave_threshold=args.octave_threshold,
         gamma=args.gamma,
         patch_name=args.patch,
     )

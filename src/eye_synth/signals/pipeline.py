@@ -42,19 +42,11 @@ class Pipeline:
         self,
         region_size: int = 50,
         smoothing: int = 3,
-        note_stability: int = 2,
-        octave_stability: int = 3,
-        octave_threshold: float = 0.5,
     ) -> None:
         self.region_size = region_size
 
         # Shared detectors
-        self.analyzer = ColorAnalyzer(
-            smoothing_window=smoothing,
-            note_stability_frames=note_stability,
-            octave_stability_frames=octave_stability,
-            octave_stability_threshold=octave_threshold,
-        )
+        self.analyzer = ColorAnalyzer(smoothing_window=smoothing)
         self.scene_detector = SceneChangeDetector()
         self.gaze_vel = GazeVelocityTracker()
 
@@ -261,14 +253,11 @@ class Pipeline:
     def _populate_env(self, cr: ColorReading) -> None:
         s = self.signals
         s.env.hue = cr.smoothed_hue
+        s.env.raw_hue = cr.hue
         s.env.hue_normalized = cr.smoothed_hue / 179.0
         s.env.saturation = cr.saturation
         s.env.brightness = cr.smoothed_brightness
         s.env.brightness_normalized = cr.smoothed_brightness / 255.0
-        s.env.note = cr.note
-        s.env.octave = cr.octave
-        s.env.midi_note = cr.midi_note
-        s.env.raw_midi_note = cr.raw_midi_note
         s.has_env_reading = True
 
     def _crop_region(

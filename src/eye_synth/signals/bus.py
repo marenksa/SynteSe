@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from eye_synth.signals.env_color import Note
 from eye_synth.signals.eye_blinks import BlinkSample, FlutterEvent
 
 
@@ -38,20 +37,14 @@ class EnvSignals:
     """All environment-derived signals, updated when a gaze region is analyzed."""
 
     # Color at gaze point
-    hue: float = 0.0               # OpenCV 0–179
+    hue: float = 0.0               # OpenCV 0–179 (temporally smoothed)
+    raw_hue: float | None = None   # instantaneous hue (pre-smoothing); None if saturation too low
     hue_normalized: float = 0.0   # 0.0–1.0
     saturation: float = 0.0       # 0–255
     brightness: float = 0.0       # 0–255
     brightness_normalized: float = 0.0  # 0.0–1.0
 
-    # Derived note info
-    note: Note = Note.C
-    octave: int = 4
-    midi_note: int = 60
-    raw_midi_note: int = 60        # pre-stability (for transition detection)
-
     # Change signals
-    region_changed: bool = False   # non-True for 1 iteration when NoteGate fires
     scene_change: float = 0.0     # full-frame change magnitude 0.0–1.0
 
 
@@ -71,7 +64,6 @@ class SignalBus:
         self.eye.blink = None
         self.eye.flutter = None
         self.eye.fixation_id = None
-        self.env.region_changed = False
         self.has_env_reading = False
 
 

@@ -62,16 +62,12 @@ OutputBus (signals/bus.py)
 - `fixation_id: int | None` — non-None for 1 iteration on new fixation
 
 **EnvSignals** (updated when gaze region is analysed, i.e. `signals.has_env_reading == True`):
-- `hue: float` — OpenCV hue 0–179 at gaze point
+- `hue: float` — OpenCV hue 0–179 (temporally smoothed)
+- `raw_hue: float | None` — instantaneous hue (pre-smoothing); None if saturation too low
 - `hue_normalized: float` — 0–1
 - `saturation: float` — 0–255
-- `brightness: float` — 0–255
+- `brightness: float` — 0–255 (smoothed)
 - `brightness_normalized: float` — 0–1
-- `note: Note` — musical note C–B from hue
-- `octave: int` — octave 3–6 from brightness
-- `midi_note: int` — stable MIDI note (post-smoothing)
-- `raw_midi_note: int` — pre-stability MIDI note (for transition detection)
-- `region_changed: bool` — True for 1 iteration when NoteGate fires
 - `scene_change: float` — full-frame change magnitude 0–1
 
 ### Data Flow Per Loop Iteration
@@ -88,7 +84,7 @@ blink_tracker.tick: → signals.eye.flutter (on burst end)
 
 if frame:
     scene_detector  → signals.env.scene_change
-    gaze region     → signals.env.hue, brightness, note, octave, midi_note
+    gaze region     → signals.env.hue, raw_hue, saturation, brightness
     gaze velocity   → signals.eye.velocity_px_s, px_pos
     signals.has_env_reading = True
 
@@ -112,13 +108,17 @@ Register in `patches/__init__.py` under `load_patch()`. Create `patches/<name>/`
 
 ## Critical Technical Knowledge
 
-### NoteGate
+### NoteMapper and NoteGate (color_music patch)
 
-Lives inside `ColorMusicPatch` (not in main.py or player.py). Tracks the MIDI note stream and fires when note stabilises after a real transition.
+These live entirely in `patches/color_music/` — they are prototype-specific.
+
+**NoteMapper** converts `signals.env.hue`, `signals.env.raw_hue`, and `signals.env.brightness` into a `NoteReading(note, octave, midi_note, raw_midi_note)`. Owns stability windows for note and octave to suppress per-frame jitter.
+
+**NoteGate** fires when the MIDI note stabilises after a real gaze transition. Uses `raw_midi_note` (pre-stability) for transition streak counting.
 
 **Why not gaze velocity or fixation events**: With a head-mounted tracker, gaze pixel position doesn't represent world position — the scene moves, not the gaze. NoteGate detects when *content* changes and stabilises instead.
 
-**Parameters:**
+**NoteGate parameters:**
 - `stable_frames` (default 4) — consecutive identical frames to trigger
 - `min_transition_frames` (default 3) — frames of different content before re-triggering same note
 
@@ -137,7 +137,9 @@ Uses Pupil Capture's built-in blink detector (onset/offset events), not confiden
 
 Real-time uses `StreamingBlinkTracker` (`signals/eye_blinks.py`). Recording playback reads pre-classified blink/flutter data from the recording file; `Pipeline.process_recording_frame()` handles flutter transition detection internally.
 
-### Colour-to-Note Mapping
+### Colour-to-Note Mapping (color_music patch)
+
+Defined in `patches/color_music/` (`HUE_RANGES`, `NOTE_SEMITONES`).
 
 ```
 Red     ~700nm  OpenCV 0–8, 165+   C   semitone 0
@@ -150,7 +152,7 @@ Violet  ~400nm  125–165            B   semitone 11
 ```
 
 MIDI note: `(octave + 1) * 12 + semitone`
-Saturation threshold: 20/255 (below this, hue is unreliable — treat as grey).
+Saturation threshold: 20/255 (below this, `raw_hue` is None — treat as grey).
 
 ### ZMQ Real-Time Streaming
 
