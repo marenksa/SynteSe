@@ -18,16 +18,24 @@ class Patch(Protocol):
         """Reset internal state (e.g. on seek or restart)."""
         ...
 
+    def shutdown(self, outputs: OutputBus) -> None:
+        """Send any necessary cleanup messages to PD before exit."""
+        ...
+
 
 def load_patch(name: str) -> Patch:
     """Load a patch by name.
 
     Available patches:
-        color_music  —  hue→note, brightness→octave, flutter→AM-LFO
+        color_music    —  hue→note, brightness→octave, flutter→AM-LFO
+        color_toggle   —  hue→color ID (1–7), stability→PD toggle
     """
     if name == "color_music":
         from eye_synth.patches.color_music import ColorMusicPatch
         return ColorMusicPatch()
+    if name == "color_toggle":
+        from eye_synth.patches.color_toggle import ColorTogglePatch
+        return ColorTogglePatch()
     raise ValueError(
-        f"Unknown patch: {name!r}. Available patches: color_music"
+        f"Unknown patch: {name!r}. Available patches: color_music, color_toggle"
     )
