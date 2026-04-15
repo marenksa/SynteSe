@@ -140,8 +140,7 @@ def run_tracker(
         print("\n[INFO] Interrupted by user.")
     finally:
         console_output.close()
-        pd_sink.send("confidence", 1.0)
-        pd_sink.send("am_lfo", 0)
+        patch.shutdown(outputs)
         pd_sink.close()
         cv2.destroyAllWindows()
 

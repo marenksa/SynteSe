@@ -38,6 +38,10 @@ class ColorMusicPatch:
         self._note_gate = NoteGate()
         self._noise_was_active = False
 
+    def shutdown(self, outputs: OutputBus) -> None:
+        outputs.send("confidence", 1.0)
+        outputs.send("am_lfo", 0)
+
     def update(self, signals: SignalBus, outputs: OutputBus) -> None:
         # --- Eye events ---
 

@@ -391,8 +391,7 @@ def main() -> None:
         print("\nInterrupted")
         sys.exit(0)
     finally:
-        pd_sink.send("confidence", 1.0)
-        pd_sink.send("am_lfo", 0)
+        patch.shutdown(outputs)
         pd_sink.close()
 
 
