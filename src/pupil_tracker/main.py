@@ -8,12 +8,14 @@ import cv2
 import numpy as np
 
 from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, NoteEvent, NoteGate
+from pupil_tracker.recording import FLUTTER_MIN_BLINKS, BlinkType
 from pupil_tracker.client import PupilCaptureClient
 from pupil_tracker.eye_events import StreamingBlinkTracker
 from pupil_tracker.output import (
     ColorConsoleSink,
     MultiSink,
     PureDataSink,
+    flutter_to_lfo,
 )
 from pupil_tracker.overlay import (
     apply_gamma,
@@ -142,11 +144,20 @@ def run_tracker(
                         else:
                             last_blink_label = "BLINK"
 
+                        if (
+                            pd_sink is not None
+                            and blink_event.blink_type == BlinkType.INTENTIONAL
+                        ):
+                            pd_sink.emit_am_lfo(0)
+
                     if flutter_event is not None:
                         flutter_flash_until = now + 0.3
                         last_flutter_label = (
                             f"FLUTTER {flutter_event.blink_count} blinks"
                         )
+
+                        if pd_sink is not None:
+                            pd_sink.emit_am_lfo(flutter_to_lfo(flutter_event.blink_count, FLUTTER_MIN_BLINKS))
 
                 # Store latest eye frame for display
                 if message.eye_frame is not None:

@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, NoteEvent, NoteGate
-from pupil_tracker.output import MultiSink, PureDataSink
+from pupil_tracker.output import MultiSink, PureDataSink, flutter_to_lfo
 from pupil_tracker.overlay import (
     apply_gamma,
     build_gamma_lut,
@@ -23,10 +23,10 @@ from pupil_tracker.overlay import (
     draw_gaze_crosshair,
     draw_region_box,
 )
-from pupil_tracker.recording import Recording
+from pupil_tracker.recording import FLUTTER_MIN_BLINKS, BlinkType, FlutterEvent, Recording
 
 if TYPE_CHECKING:
-    from pupil_tracker.recording import FlutterEvent, GazeSample
+    from pupil_tracker.recording import GazeSample
 
 
 @dataclass
@@ -88,7 +88,11 @@ class GazeVideoPlayer:
 
         # Flutter display state
         self._flutter_flash_until = 0.0
-        self._last_flutter: "FlutterEvent | None" = None
+        self._last_flutter: FlutterEvent | None = None
+
+        # AM-LFO state: track flutter transitions and intentional blinks
+        self._in_flutter = False
+        self._last_intentional_ts: float = -1.0
 
     def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
         """Apply gamma correction to a frame using lookup table."""
@@ -306,6 +310,8 @@ class GazeVideoPlayer:
                 # Reset flash timers so stale indicators don't persist after seek/loop
                 self._blink_flash_until = 0.0
                 self._flutter_flash_until = 0.0
+                self._in_flutter = False
+                self._last_intentional_ts = -1.0
 
             result = self.recording.read_next_frame()
             if result is None:
@@ -330,6 +336,10 @@ class GazeVideoPlayer:
                 if fixation is not None:
                     self._note_gate.new_fixation(fixation.id)
 
+                world_ts = self.recording.get_frame_timestamp(self.frame_index)
+                flutter = self.recording.get_flutter_at_timestamp(world_ts)
+                in_flutter = flutter is not None
+
                 gaze = self.recording.get_gaze_for_frame(self.frame_index)
                 if gaze is not None and gaze.confidence >= self.confidence_threshold:
                     region = self.extract_region(current_frame, gaze)
@@ -340,8 +350,6 @@ class GazeVideoPlayer:
                             self.output.emit(color_reading)
 
                         # Content-based note triggering (suppressed during flutter)
-                        world_ts = self.recording.get_frame_timestamp(self.frame_index)
-                        in_flutter = self.recording.get_flutter_at_timestamp(world_ts) is not None
                         if (
                             self.pd_sink is not None
                             and not in_flutter
@@ -357,6 +365,24 @@ class GazeVideoPlayer:
                                 center_y=color_reading.center_y,
                             )
                             self.pd_sink.emit(note_event)
+
+                # AM-LFO runs at frame level, independent of gaze confidence
+                if self.pd_sink is not None:
+                    if self._in_flutter and not in_flutter and self._last_flutter is not None:
+                        self.pd_sink.emit_am_lfo(flutter_to_lfo(self._last_flutter.blink_count, FLUTTER_MIN_BLINKS))
+
+                    blink = self.recording.get_blink_at_timestamp(world_ts)
+                    if (
+                        blink is not None
+                        and blink.blink_type == BlinkType.INTENTIONAL
+                        and blink.timestamp != self._last_intentional_ts
+                    ):
+                        self.pd_sink.emit_am_lfo(0)
+                        self._last_intentional_ts = blink.timestamp
+
+                if in_flutter and flutter is not None:
+                    self._last_flutter = flutter
+                self._in_flutter = in_flutter
 
             # Draw overlays
             display_frame = current_frame.copy()

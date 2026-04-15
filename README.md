@@ -68,20 +68,6 @@ uv run gaze-player recordings/000 --gamma 0.5
 
 Controls: Space (play/pause), arrow keys (frame step), H (help), Q (quit).
 
-### Test Images
-
-Generate calibration images to verify color detection:
-
-```bash
-uv run python scripts/generate_test_image.py
-```
-
-This creates two images in `test_images/`:
-- **color_test_grid.png**: 7x5 grid (colors × octaves) for full calibration
-- **rainbow_strip.png**: Simple horizontal color strip
-
-Open the test grid on your screen and look at each square with the glasses to verify detection.
-
 ### Test Pure Data Connection
 
 Test the Pure Data connection without Pupil hardware:
@@ -175,9 +161,17 @@ Pure Data output:
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
+│                      NoteGate                               │
+│    • Triggers when MIDI note stabilizes after transition    │
+│    • Filters jitter, deduplicates resting gaze             │
+│                      analyzer.py                            │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
 │                    Output Sinks                             │
 │    • ColorConsoleSink: Real-time note/color display         │
-│    • PureDataFUDISink: FUDI/TCP to Pure Data                │
+│    • PureDataSink: FUDI/TCP to Pure Data                    │
 │                       output.py                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -194,11 +188,7 @@ pupil-color-tracker/
 ├── scripts/
 │   ├── debug_connection.py     # Debug Pupil Capture connection
 │   ├── test_puredata.py        # Test Pure Data communication
-│   ├── test_color_grid.py      # Play through color-brightness grid
-│   └── generate_test_image.py  # Generate calibration images
-├── test_images/                # Generated calibration images
-│   ├── color_test_grid.png     # 7x5 color-brightness grid
-│   └── rainbow_strip.png       # Simple color strip
+│   └── test_color_grid.py      # Play through color-brightness grid
 ├── recordings/                 # Pupil Capture recordings for playback
 │   └── 000/                    # Example recording directory
 └── src/pupil_tracker/

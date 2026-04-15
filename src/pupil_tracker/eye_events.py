@@ -40,6 +40,7 @@ class StreamingBlinkTracker:
         self._blink_times: deque[float] = deque()
         self._flutter_start: float | None = None
         self._flutter_count = 0
+        self._flutter_blink_count = 0  # Blinks accumulated during current flutter
 
     @property
     def blink_count(self) -> int:
@@ -82,6 +83,8 @@ class StreamingBlinkTracker:
                 )
                 self._blink_count += 1
                 self._blink_times.append(self._pending_onset_ts)
+                if self._flutter_start is not None:
+                    self._flutter_blink_count += 1
 
             # Start new pending onset
             self._pending_onset_ts = timestamp
@@ -99,6 +102,8 @@ class StreamingBlinkTracker:
                 )
                 self._blink_count += 1
                 self._blink_times.append(self._pending_onset_ts)
+                if self._flutter_start is not None:
+                    self._flutter_blink_count += 1
                 self._pending_onset_ts = None
 
         # Check for flutter (sliding window)
@@ -119,6 +124,7 @@ class StreamingBlinkTracker:
             if self._flutter_start is None:
                 # Flutter becomes detectable now (at the Nth blink), not retroactively
                 self._flutter_start = now
+                self._flutter_blink_count = count
             return None  # Still in flutter
         else:
             if self._flutter_start is not None:
@@ -126,9 +132,10 @@ class StreamingBlinkTracker:
                 event = FlutterEvent(
                     timestamp=self._flutter_start,
                     duration_s=now - self._flutter_start,
-                    blink_count=FLUTTER_MIN_BLINKS,
+                    blink_count=self._flutter_blink_count,
                 )
                 self._flutter_start = None
+                self._flutter_blink_count = 0
                 self._flutter_count += 1
                 return event
 

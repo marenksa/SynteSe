@@ -373,7 +373,7 @@ class Recording:
         blink_ts = self.blink_timestamps
         events: list[FlutterEvent] = []
         flutter_start: float | None = None
-        flutter_count = 0
+        flutter_blink_start_idx: int | None = None
 
         for i, ts in enumerate(blink_ts):
             # Count blinks in the trailing window ending at this blink
@@ -382,26 +382,27 @@ class Recording:
 
             if count >= FLUTTER_MIN_BLINKS:
                 if flutter_start is None:
-                    # Flutter just became detectable at this blink
+                    # Flutter just became detectable at this blink; note the
+                    # start of the window so we can count the full burst later
                     flutter_start = ts
-                flutter_count = max(flutter_count, count)
+                    flutter_blink_start_idx = int(np.searchsorted(blink_ts, window_start))
             else:
                 if flutter_start is not None:
                     # Flutter just ended
                     events.append(FlutterEvent(
                         timestamp=flutter_start,
                         duration_s=blink_ts[i - 1] - flutter_start + 0.2,
-                        blink_count=flutter_count,
+                        blink_count=i - flutter_blink_start_idx,
                     ))
                     flutter_start = None
-                    flutter_count = 0
+                    flutter_blink_start_idx = None
 
         # Close any open flutter at end of recording
         if flutter_start is not None:
             events.append(FlutterEvent(
                 timestamp=flutter_start,
                 duration_s=blink_ts[-1] - flutter_start + 0.2,
-                blink_count=flutter_count,
+                blink_count=len(blink_ts) - flutter_blink_start_idx,
             ))
 
         logger.info("[Recording] Flutter detection: %d event(s)", len(events))

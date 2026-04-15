@@ -33,10 +33,6 @@ class NoteEventSink(Protocol):
         """
         ...
 
-    def stop(self) -> None:
-        """Send stop message to silence output."""
-        ...
-
     def close(self) -> None:
         """Close the sink and release any resources."""
         ...
@@ -112,6 +108,20 @@ class ColorConsoleSink:
         print()
 
 
+FLUTTER_LFO_MAX_BLINKS = 15  # Blink count that maps to max LFO frequency (50 Hz)
+
+
+def flutter_to_lfo(blink_count: int, flutter_min_blinks: int) -> int:
+    """Map flutter total blink count to LFO frequency (1-50 Hz).
+
+    Linear scale: flutter_min_blinks -> 1 Hz, FLUTTER_LFO_MAX_BLINKS -> 50 Hz.
+    Capped at 50 Hz beyond that.
+    """
+    blink_range = FLUTTER_LFO_MAX_BLINKS - flutter_min_blinks
+    freq = 1 + (blink_count - flutter_min_blinks) * 49 / blink_range
+    return max(1, min(round(freq), 50))
+
+
 class PureDataSink:
     """Output sink that sends note events to Pure Data via FUDI (TCP).
 
@@ -120,7 +130,8 @@ class PureDataSink:
 
     Messages (FUDI format):
         note_on <midi_note> <brightness>;
-        stop;
+        am_lfo <value>;   (0-50, LFO frequency in Hz)
+        am_amp <value>;   (0-127, amplitude modulation depth)
     """
 
     def __init__(
@@ -180,17 +191,25 @@ class PureDataSink:
         message = f"note_on {event.midi_note} {event.brightness:.2f};\n"
         self._send(message)
 
-    def stop(self) -> None:
-        """Send stop message to silence Pure Data."""
-        self._send("stop;\n")
+    def emit_am_lfo(self, value: int) -> None:
+        """Send LFO frequency value to Pure Data amplitude modulation.
+
+        Args:
+            value: LFO frequency in Hz, 0-50. 0 clears the effect.
+        """
+        self._send(f"am_lfo {value};\n")
+
+    def emit_am_amp(self, value: int) -> None:
+        """Send amplitude modulation depth to Pure Data.
+
+        Args:
+            value: Modulation depth, 0-127 (scaled to 0-2 in Pd).
+        """
+        self._send(f"am_amp {value};\n")
 
     def close(self) -> None:
-        """Close the TCP connection, sending stop message to silence Pd."""
+        """Close the TCP connection."""
         if self._socket and self._connected:
-            try:
-                self._socket.send(b"stop;\n")
-            except (BrokenPipeError, ConnectionResetError):
-                pass
             self._socket.close()
             self._socket = None
             self._connected = False
