@@ -395,11 +395,11 @@ class GazeVideoPlayer:
                 show_help = not show_help
             elif key == 81 or key == 2:  # Left arrow
                 self.playing = False
-                self.frame_index = max(0, self.frame_index - 1)
+                self.frame_index = max(0, self.frame_index - 30)
                 need_seek = True
             elif key == 83 or key == 3:  # Right arrow
                 self.playing = False
-                self.frame_index = min(total_frames - 1, self.frame_index + 1)
+                self.frame_index = min(total_frames - 1, self.frame_index + 30)
                 need_seek = True
             elif key == 80 or key == 0:  # Home
                 self.frame_index = 0
