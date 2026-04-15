@@ -12,34 +12,21 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteGate
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, NoteEvent, NoteGate
 from pupil_tracker.output import MultiSink, PureDataSink
+from pupil_tracker.overlay import (
+    apply_gamma,
+    build_gamma_lut,
+    draw_brightness_bar,
+    draw_color_info,
+    draw_eye_panel,
+    draw_gaze_crosshair,
+    draw_region_box,
+)
 from pupil_tracker.recording import Recording
 
 if TYPE_CHECKING:
-    from pupil_tracker.recording import EyeClosureEvent, FlutterEvent, GazeSample
-
-
-# BGR colors for each note (matching the hue ranges)
-NOTE_BGR_COLORS: dict[Note, tuple[int, int, int]] = {
-    Note.C: (60, 60, 220),  # Red
-    Note.D: (60, 140, 255),  # Orange
-    Note.E: (60, 220, 255),  # Yellow
-    Note.F: (60, 180, 60),  # Green
-    Note.G: (180, 180, 60),  # Cyan
-    Note.A: (220, 120, 60),  # Blue
-    Note.B: (180, 60, 180),  # Violet
-}
-
-NOTE_COLOR_NAMES: dict[Note, str] = {
-    Note.C: "Red",
-    Note.D: "Orange",
-    Note.E: "Yellow",
-    Note.F: "Green",
-    Note.G: "Cyan",
-    Note.A: "Blue",
-    Note.B: "Violet",
-}
+    from pupil_tracker.recording import FlutterEvent, GazeSample
 
 
 @dataclass
@@ -80,7 +67,7 @@ class GazeVideoPlayer:
         self.last_reading: ColorReading | None = None
 
         # Build gamma lookup table for performance
-        self._gamma_lut = self._build_gamma_lut(gamma)
+        self._gamma_lut = build_gamma_lut(gamma)
 
         # Display settings
         self.gaze_radius = 20
@@ -95,36 +82,19 @@ class GazeVideoPlayer:
         # Content-based note triggering
         self._note_gate = NoteGate()
 
-        # Blink display state (old detector)
-        self._blink_flash_until = 0.0  # Timestamp until which to show blink flash
-        self._last_blink_duration_ms = 0.0
-
-        # Eye closure display state (new detector)
-        self._closure_flash_until = 0.0
-        self._last_closure: "EyeClosureEvent | None" = None
+        # Blink display state
+        self._blink_flash_until = 0.0
+        self._last_blink_label: str | None = None
 
         # Flutter display state
         self._flutter_flash_until = 0.0
         self._last_flutter: "FlutterEvent | None" = None
 
-    def _build_gamma_lut(self, gamma: float) -> np.ndarray:
-        """Build a lookup table for gamma correction.
-
-        gamma < 1.0 brightens the image (e.g., 0.5)
-        gamma > 1.0 darkens the image (e.g., 2.0)
-        """
-        if gamma == 1.0:
-            return np.arange(256, dtype=np.uint8)
-        return np.array(
-            [((i / 255.0) ** gamma) * 255 for i in range(256)],
-            dtype=np.uint8,
-        )
-
     def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
         """Apply gamma correction to a frame using lookup table."""
         if self.gamma == 1.0:
             return frame
-        return cv2.LUT(frame, self._gamma_lut)
+        return apply_gamma(frame, self._gamma_lut)
 
     def extract_region(
         self, frame: np.ndarray, gaze: GazeSample
@@ -160,38 +130,8 @@ class GazeVideoPlayer:
             return frame
 
         reading = self.last_reading
-        note = reading.note
-        octave = reading.octave
-        color = NOTE_BGR_COLORS.get(note, (128, 128, 128))
-        color_name = NOTE_COLOR_NAMES.get(note, "?")
-
-        x, y, size = 10, 30, 40
-
-        # Draw brightness bar
-        bar_x, bar_y, bar_w, bar_h = 10, 80, 200, 20
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (50, 50, 50), -1)
-        filled_w = int(reading.smoothed_brightness / 255 * bar_w)
-        if filled_w > 0:
-            ratio = reading.smoothed_brightness / 255
-            bar_color = (int(50 + ratio * 50), int(50 + ratio * 200), int(50 + ratio * 200))
-            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + filled_w, bar_y + bar_h), bar_color, -1)
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (200, 200, 200), 1)
-        cv2.putText(frame, f"Brightness: {reading.smoothed_brightness:.0f}", (bar_x + bar_w + 10, bar_y + 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-        # Draw color square
-        cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
-        cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
-
-        # Note name and octave
-        note_text = f"{note.name}{octave}"
-        cv2.putText(frame, note_text, (x + size + 10, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        # Color name
-        cv2.putText(frame, color_name, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
-
-        # MIDI note
-        cv2.putText(frame, f"MIDI: {reading.midi_note}", (x + size + 80, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+        draw_brightness_bar(frame, reading.smoothed_brightness, x=10, y=80)
+        draw_color_info(frame, reading, x=10, y=30)
 
         return frame
 
@@ -202,134 +142,56 @@ class GazeVideoPlayer:
         if gaze is None:
             return frame
 
-        # Get pixel coordinates
         height, width = frame.shape[:2]
         x, y = self.recording.gaze_to_pixel(gaze, width, height)
 
-        # Choose color based on confidence
-        if gaze.confidence >= self.confidence_threshold:
-            color = self.gaze_color
-        else:
-            color = self.low_confidence_color
-
-        # Draw crosshair
-        cv2.circle(frame, (x, y), self.gaze_radius, color, self.gaze_thickness)
-        cv2.line(frame, (x - 30, y), (x + 30, y), color, 1)
-        cv2.line(frame, (x, y - 30), (x, y + 30), color, 1)
-
-        # Draw confidence indicator
-        conf_text = f"Conf: {gaze.confidence:.2f}"
-        cv2.putText(frame, conf_text, (x + 25, y - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        draw_gaze_crosshair(frame, x, y, gaze.confidence,
+                            radius=self.gaze_radius,
+                            confidence_threshold=self.confidence_threshold)
+        draw_region_box(frame, x, y, self.region_size, gaze.confidence,
+                        confidence_threshold=self.confidence_threshold)
 
         return frame
 
     def draw_eye_camera(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         """Draw eye camera feed and blink indicator in the top-right corner."""
         eye_frame = self.recording.get_eye_frame_for_world_frame(frame_index)
-        if eye_frame is None:
-            return frame
 
-        height, width = frame.shape[:2]
-
-        # Scale eye frame to a reasonable size (eye is 192x192, show at ~150px)
-        eye_h, eye_w = eye_frame.shape[:2]
-        scale = 150 / max(eye_h, eye_w)
-        display_size = (int(eye_w * scale), int(eye_h * scale))
-        eye_resized = cv2.resize(eye_frame, display_size)
-        eye_resized = cv2.flip(eye_resized, 0)  # Pupil eye camera is upside down
-
-        # Convert grayscale eye frame to BGR if needed
-        if len(eye_resized.shape) == 2:
-            eye_resized = cv2.cvtColor(eye_resized, cv2.COLOR_GRAY2BGR)
-
-        eh, ew = eye_resized.shape[:2]
-        margin = 10
-        x_offset = width - ew - margin
-        y_offset = margin
-
-        # Check for active blink (old detector)
         world_ts = self.recording.get_frame_timestamp(frame_index)
-        blink = self.recording.get_blink_at_timestamp(world_ts)
 
+        # Check for active blink
+        blink = self.recording.get_blink_at_timestamp(world_ts)
         if blink is not None:
             self._blink_flash_until = world_ts + 0.2
-            self._last_blink_duration_ms = blink.duration_ms
-
-        is_blinking = world_ts < self._blink_flash_until
-
-        # Check for eye closure (new detector)
-        closure = self.recording.get_eye_closure_at_timestamp(world_ts)
-        if closure is not None:
-            self._closure_flash_until = world_ts + 0.2
-            self._last_closure = closure
-
-        is_closure = world_ts < self._closure_flash_until
-
-        # Draw border — red for old blink, cyan for new closure, both = magenta
-        if is_blinking and is_closure:
-            border_color = (255, 0, 255)  # Magenta — both detectors agree
-        elif is_blinking:
-            border_color = (0, 0, 255)  # Red — old only
-        elif is_closure:
-            border_color = (255, 255, 0)  # Cyan — new only
-        else:
-            border_color = (200, 200, 200)
-
-        border_width = 3 if (is_blinking or is_closure) else 1
-        cv2.rectangle(
-            frame,
-            (x_offset - border_width, y_offset - border_width),
-            (x_offset + ew + border_width, y_offset + eh + border_width),
-            border_color,
-            border_width,
-        )
-
-        # Place eye frame
-        frame[y_offset:y_offset + eh, x_offset:x_offset + ew] = eye_resized
-
-        # Draw blink/closure text below eye frame
-        text_y = y_offset + eh + 20
-        if is_blinking:
-            if self._last_blink_duration_ms >= 0:
-                duration_text = f"OLD: BLINK {self._last_blink_duration_ms:.0f}ms"
+            if blink.duration_ms >= 0:
+                self._last_blink_label = (
+                    f"{blink.blink_type.value.upper()} {blink.duration_ms:.0f}ms"
+                )
             else:
-                duration_text = "OLD: BLINK"
-            cv2.putText(frame, duration_text, (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        else:
-            old_count = len(self.recording.blink_data)
-            cv2.putText(frame, f"Old: {old_count}", (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-
-        text_y += 22
-        if is_closure and self._last_closure is not None:
-            c = self._last_closure
-            label = f"NEW: {c.duration_ms:.0f}ms [{c.closure_type.value}]"
-            cv2.putText(frame, label, (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-        else:
-            new_count = len(self.recording.eye_closure_data)
-            cv2.putText(frame, f"New: {new_count}", (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                self._last_blink_label = "BLINK"
+        is_blinking = world_ts < self._blink_flash_until
 
         # Check for flutter
         flutter = self.recording.get_flutter_at_timestamp(world_ts)
         if flutter is not None:
             self._flutter_flash_until = world_ts + 0.2
             self._last_flutter = flutter
-
         is_flutter = world_ts < self._flutter_flash_until
 
-        text_y += 22
+        flutter_label = None
         if is_flutter and self._last_flutter is not None:
-            f = self._last_flutter
-            label = f"FLUTTER {f.crossing_rate:.1f}/s"
-            cv2.putText(frame, label, (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-        else:
-            flutter_count = len(self.recording.flutter_data)
-            cv2.putText(frame, f"Flutter: {flutter_count}", (x_offset, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+            flutter_label = f"FLUTTER {self._last_flutter.blink_count} blinks"
+
+        draw_eye_panel(
+            frame,
+            eye_frame,
+            is_blink=is_blinking,
+            blink_label=self._last_blink_label if is_blinking else None,
+            is_flutter=is_flutter,
+            flutter_label=flutter_label,
+            blink_count=len(self.recording.blink_data),
+            flutter_count=len(self.recording.flutter_data),
+        )
 
         return frame
 
@@ -424,8 +286,7 @@ class GazeVideoPlayer:
         print(f"Duration: {self.recording.duration_s:.1f}s, {total_frames} frames @ {self.recording.fps:.1f} FPS")
         print(f"Gaze samples: {len(self.recording.gaze_data)}")
         print(f"Fixations: {len(self.recording.fixation_data)}")
-        print(f"Blinks (old): {len(self.recording.blink_data)}")
-        print(f"Eye closures (new): {len(self.recording.eye_closure_data)}")
+        print(f"Blinks: {len(self.recording.blink_data)}")
         print(f"Flutter events: {len(self.recording.flutter_data)}")
         if self.recording.eye_video is not None:
             print(f"Eye camera: available")
@@ -444,7 +305,6 @@ class GazeVideoPlayer:
                 next_frame_time = time.perf_counter()  # Reset timing after seek
                 # Reset flash timers so stale indicators don't persist after seek/loop
                 self._blink_flash_until = 0.0
-                self._closure_flash_until = 0.0
                 self._flutter_flash_until = 0.0
 
             result = self.recording.read_next_frame()
@@ -465,6 +325,11 @@ class GazeVideoPlayer:
 
             # Color analysis if enabled (only when playing to avoid smoothing lag)
             if self.analyzer is not None and self.playing:
+                # Feed fixation events to the note gate
+                fixation = self.recording.get_fixation_for_frame(self.frame_index)
+                if fixation is not None:
+                    self._note_gate.new_fixation(fixation.id)
+
                 gaze = self.recording.get_gaze_for_frame(self.frame_index)
                 if gaze is not None and gaze.confidence >= self.confidence_threshold:
                     region = self.extract_region(current_frame, gaze)
@@ -474,10 +339,13 @@ class GazeVideoPlayer:
                         if self.output is not None:
                             self.output.emit(color_reading)
 
-                        # Content-based note triggering
+                        # Content-based note triggering (suppressed during flutter)
+                        world_ts = self.recording.get_frame_timestamp(self.frame_index)
+                        in_flutter = self.recording.get_flutter_at_timestamp(world_ts) is not None
                         if (
                             self.pd_sink is not None
-                            and self._note_gate.update(color_reading.midi_note)
+                            and not in_flutter
+                            and self._note_gate.update(color_reading.midi_note, color_reading.raw_midi_note)
                         ):
                             note_event = NoteEvent(
                                 timestamp=color_reading.timestamp,

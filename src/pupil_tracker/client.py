@@ -44,12 +44,36 @@ class FixationData:
 
 
 @dataclass(frozen=True)
+class BlinkData:
+    """Blink event from Pupil Capture's blink detector."""
+
+    timestamp: float
+    blink_type: str  # "onset" or "offset"
+    confidence: float
+    topic: str
+
+
+@dataclass(frozen=True)
+class EyeFrameData:
+    """Eye camera frame data from Pupil Capture."""
+
+    timestamp: float
+    eye_id: int
+    width: int
+    height: int
+    data: NDArray[np.uint8]  # Grayscale or BGR image
+    topic: str
+
+
+@dataclass(frozen=True)
 class Message:
     """Union type for messages received from Pupil Capture."""
 
     gaze: GazeData | None = None
     frame: FrameData | None = None
     fixation: FixationData | None = None
+    blink: BlinkData | None = None
+    eye_frame: EyeFrameData | None = None
 
 
 class PupilCaptureClient:
@@ -110,12 +134,14 @@ class PupilCaptureClient:
         self._subscriber.setsockopt(zmq.LINGER, 0)  # Don't wait on close
         self._subscriber.connect(f"tcp://{self._host}:{self._sub_port}")
 
-        # Subscribe to gaze, frame, and fixation topics
+        # Subscribe to gaze, frame, fixation, pupil, and eye camera topics
         # For gaze, prefer combined (01) over single eye to avoid binocular flicker
         # We subscribe to all and filter in _get_latest_messages
         self._subscriber.subscribe("gaze")
         self._subscriber.subscribe("frame.world")
         self._subscriber.subscribe("fixations")
+        self._subscriber.subscribe("blinks")
+        self._subscriber.subscribe("frame.eye.0")
 
         # Drain any buffered messages to start fresh
         self._drain_buffer()
@@ -150,23 +176,31 @@ class PupilCaptureClient:
 
     def _get_latest_messages(
         self,
-    ) -> tuple[list[bytes] | None, list[bytes] | None, list[bytes] | None]:
-        """Get the latest gaze, frame, and fixation messages, discarding older ones.
+    ) -> tuple[
+        list[bytes] | None,
+        list[bytes] | None,
+        list[bytes] | None,
+        list[bytes] | None,
+        list[bytes] | None,
+    ]:
+        """Get the latest messages of each type, discarding older ones.
 
         This drains the buffer and returns only the most recent of each type.
         For gaze, prefers combined gaze; for single-eye, picks higher confidence.
 
         Returns:
-            Tuple of (latest_gaze_parts, latest_frame_parts, latest_fixation_parts).
+            Tuple of (gaze, frame, fixation, pupil, eye_frame) parts.
         """
         if self._subscriber is None:
-            return None, None, None
+            return None, None, None, None, None
 
         latest_gaze: list[bytes] | None = None
         latest_gaze_combined: bool = False
         latest_gaze_confidence: float = -1.0
         latest_frame: list[bytes] | None = None
         latest_fixation: list[bytes] | None = None
+        latest_blink: list[bytes] | None = None
+        latest_eye_frame: list[bytes] | None = None
 
         def should_replace_gaze(topic: str, confidence: float) -> bool:
             """Check if new gaze should replace current best."""
@@ -185,7 +219,6 @@ class PupilCaptureClient:
         def update_gaze(parts: list[bytes], topic: str) -> None:
             """Update latest gaze tracking state."""
             nonlocal latest_gaze, latest_gaze_combined, latest_gaze_confidence
-            # Parse confidence from payload
             payload = msgpack.loads(parts[1], raw=False)
             confidence = float(payload.get("confidence", 0.0))
 
@@ -194,34 +227,38 @@ class PupilCaptureClient:
                 latest_gaze_combined = self._is_combined_gaze(topic)
                 latest_gaze_confidence = confidence
 
-        # First, do one blocking receive to ensure we have at least one message
-        try:
-            parts = self._subscriber.recv_multipart()
-            topic = parts[0].decode("utf-8")
+        def classify(topic: str, parts: list[bytes]) -> None:
+            """Classify a message by topic and update the appropriate latest."""
+            nonlocal latest_frame, latest_fixation, latest_blink, latest_eye_frame
             if topic.startswith("gaze"):
                 update_gaze(parts, topic)
             elif topic.startswith("frame.world"):
                 latest_frame = parts
+            elif topic.startswith("frame.eye"):
+                latest_eye_frame = parts
             elif topic.startswith("fixations"):
                 latest_fixation = parts
+            elif topic.startswith("blinks"):
+                latest_blink = parts
+
+        # First, do one blocking receive to ensure we have at least one message
+        try:
+            parts = self._subscriber.recv_multipart()
+            topic = parts[0].decode("utf-8")
+            classify(topic, parts)
         except zmq.Again:
-            return None, None, None
+            return None, None, None, None, None
 
         # Now drain all remaining messages, keeping only the best of each type
         while True:
             try:
                 parts = self._subscriber.recv_multipart(flags=zmq.NOBLOCK)
                 topic = parts[0].decode("utf-8")
-                if topic.startswith("gaze"):
-                    update_gaze(parts, topic)
-                elif topic.startswith("frame.world"):
-                    latest_frame = parts
-                elif topic.startswith("fixations"):
-                    latest_fixation = parts
+                classify(topic, parts)
             except zmq.Again:
                 break
 
-        return latest_gaze, latest_frame, latest_fixation
+        return latest_gaze, latest_frame, latest_fixation, latest_blink, latest_eye_frame
 
     def disconnect(self) -> None:
         """Disconnect from Pupil Capture and clean up resources."""
@@ -316,6 +353,73 @@ class PupilCaptureClient:
             pass
         return None
 
+    def _parse_blink(self, topic: str, payload: dict) -> BlinkData:
+        """Parse a blink event from the payload."""
+        return BlinkData(
+            timestamp=payload.get("timestamp", 0.0),
+            blink_type=payload.get("type", "unknown"),
+            confidence=float(payload.get("confidence", 0.0)),
+            topic=topic,
+        )
+
+    def _parse_eye_frame(self, topic: str, payload: dict) -> EyeFrameData | None:
+        """Parse an eye camera frame from the payload."""
+        import cv2 as _cv2
+
+        raw_data = payload.get("__raw_data__", [])
+        if not raw_data:
+            raw_data = payload.get("data", [])
+        if not raw_data:
+            return None
+
+        if isinstance(raw_data, list) and len(raw_data) > 0:
+            frame_bytes = raw_data[0] if isinstance(raw_data[0], bytes) else bytes(raw_data)
+        elif isinstance(raw_data, bytes):
+            frame_bytes = raw_data
+        else:
+            return None
+
+        width = payload.get("width", 0)
+        height = payload.get("height", 0)
+        frame_format = payload.get("format", "gray")
+
+        if width == 0 or height == 0:
+            return None
+
+        try:
+            image_data = np.frombuffer(frame_bytes, dtype=np.uint8)
+
+            if frame_format == "jpeg":
+                frame = _cv2.imdecode(image_data, _cv2.IMREAD_GRAYSCALE)
+                if frame is None:
+                    return None
+            else:
+                expected_size = height * width
+                if image_data.size < expected_size:
+                    return None
+                frame = image_data[:expected_size].reshape((height, width))
+
+            # Determine eye_id from topic (e.g. "frame.eye.0")
+            eye_id = 0
+            parts_list = topic.split(".")
+            if len(parts_list) >= 3:
+                try:
+                    eye_id = int(parts_list[2])
+                except ValueError:
+                    pass
+
+            return EyeFrameData(
+                timestamp=payload.get("timestamp", 0.0),
+                eye_id=eye_id,
+                width=frame.shape[1] if len(frame.shape) > 1 else width,
+                height=frame.shape[0],
+                data=frame,
+                topic=topic,
+            )
+        except (ValueError, RuntimeError):
+            pass
+        return None
+
     def _parse_parts(self, parts: list[bytes]) -> Message:
         """Parse message parts into a Message object."""
         if len(parts) < 2:
@@ -337,8 +441,14 @@ class PupilCaptureClient:
             frame = self._parse_frame(topic, payload)
             if frame is not None:
                 return Message(frame=frame)
+        elif topic.startswith("frame.eye"):
+            eye_frame = self._parse_eye_frame(topic, payload)
+            if eye_frame is not None:
+                return Message(eye_frame=eye_frame)
         elif topic.startswith("fixations"):
             return Message(fixation=self._parse_fixation(topic, payload))
+        elif topic.startswith("blinks"):
+            return Message(blink=self._parse_blink(topic, payload))
 
         return Message()
 
@@ -360,22 +470,35 @@ class PupilCaptureClient:
         while True:
             try:
                 # Get the LATEST messages, discarding any buffered old ones
-                latest_gaze_parts, latest_frame_parts, latest_fixation_parts = (
-                    self._get_latest_messages()
-                )
+                (
+                    latest_gaze_parts,
+                    latest_frame_parts,
+                    latest_fixation_parts,
+                    latest_blink_parts,
+                    latest_eye_frame_parts,
+                ) = self._get_latest_messages()
                 timeout_count = 0
 
-                # Parse fixation if we got one
+                # Parse optional data
                 fixation_data = None
                 if latest_fixation_parts is not None:
                     fix_msg = self._parse_parts(latest_fixation_parts)
                     fixation_data = fix_msg.fixation
 
+                blink_data = None
+                if latest_blink_parts is not None:
+                    blink_msg = self._parse_parts(latest_blink_parts)
+                    blink_data = blink_msg.blink
+
+                eye_frame_data = None
+                if latest_eye_frame_parts is not None:
+                    eye_msg = self._parse_parts(latest_eye_frame_parts)
+                    eye_frame_data = eye_msg.eye_frame
+
                 # Yield frame message if we got one
                 if latest_frame_parts is not None:
                     msg = self._parse_parts(latest_frame_parts)
                     if msg.frame is not None:
-                        # Include latest gaze and fixation in the same message
                         gaze_data = None
                         if latest_gaze_parts is not None:
                             gaze_msg = self._parse_parts(latest_gaze_parts)
@@ -384,14 +507,23 @@ class PupilCaptureClient:
                             gaze=gaze_data,
                             frame=msg.frame,
                             fixation=fixation_data,
+                            blink=blink_data,
+                            eye_frame=eye_frame_data,
                         )
                 elif latest_gaze_parts is not None:
-                    # Only gaze (and possibly fixation), no frame this cycle
                     gaze_msg = self._parse_parts(latest_gaze_parts)
-                    yield Message(gaze=gaze_msg.gaze, fixation=fixation_data)
-                elif fixation_data is not None:
-                    # Only fixation
-                    yield Message(fixation=fixation_data)
+                    yield Message(
+                        gaze=gaze_msg.gaze,
+                        fixation=fixation_data,
+                        blink=blink_data,
+                        eye_frame=eye_frame_data,
+                    )
+                elif any(d is not None for d in (fixation_data, blink_data, eye_frame_data)):
+                    yield Message(
+                        fixation=fixation_data,
+                        blink=blink_data,
+                        eye_frame=eye_frame_data,
+                    )
 
             except zmq.Again:
                 timeout_count += 1

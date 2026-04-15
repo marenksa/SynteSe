@@ -18,8 +18,7 @@ from pupil_tracker.output import (
 from pupil_tracker.processor import FrameProcessor, GazeRegion
 from pupil_tracker.recording import (
     BlinkSample,
-    EyeClosureEvent,
-    EyeClosureType,
+    BlinkType,
     FixationSample,
     FlutterEvent,
     GazeSample,
@@ -56,7 +55,6 @@ __all__ = [
     "GazeSample",
     "BlinkSample",
     "FixationSample",
-    "EyeClosureEvent",
-    "EyeClosureType",
+    "BlinkType",
     "FlutterEvent",
 ]

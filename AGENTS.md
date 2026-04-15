@@ -7,43 +7,77 @@ This document provides guidance for AI agents working in this repository.
 **Goal**: Build a real-time eye tracking color-to-music system that:
 1. Streams gaze and video data from Pupil Core hardware
 2. Analyzes color at the gaze point (hue → note, brightness → octave)
-3. Outputs MIDI notes to Pure Data for sound synthesis
+3. Triggers notes on fixation events (when gaze dwells on a point)
+4. Outputs to Pure Data for sound synthesis
 
-**Current State**: Color-to-music mode working (color → note, brightness → octave)
+**Current State**: Content-based note triggering via `NoteGate`. Notes trigger when the detected MIDI note stabilizes after a real transition — no dependency on gaze velocity or Pupil fixation events.
 
-**Future Direction**: Add ML-based object/material classification for more sophisticated gaze-based audio feedback.
+**Future Direction**: Explore spatial mapping, pentatonic scales, or other approaches for more predictable/playable melodies.
 
 ## Architecture
 
 ```
 Pupil Capture (external app)
     → ZMQ/MessagePack protocol
-    → Our Python client
-    → Processing pipeline
-    → Output sinks (console, Pure Data)
+    → Our Python client (gaze, frames)
+    → Color analysis at gaze point
+    → NoteGate: trigger when MIDI note stabilizes after transition
+    → PureDataSink → Pure Data (ADSR envelope synthesis)
 ```
 
 ### Key Components
 
 | File | Purpose |
 |------|---------|
-| `client.py` | ZMQ connection to Pupil Capture, message parsing |
+| `client.py` | ZMQ connection to Pupil Capture, parses gaze/frame/fixation data |
 | `processor.py` | Gaze-to-pixel mapping, region extraction |
-| `analyzer.py` | Color analysis (ColorAnalyzer) |
-| `output.py` | Output sink protocol and implementations (console, Pure Data) |
-| `main.py` | CLI entry point, main loop |
+| `analyzer.py` | Color analysis (ColorAnalyzer), NoteGate, NoteEvent |
+| `output.py` | Output sinks (ColorConsoleSink, PureDataSink) |
+| `recording.py` | Loads Pupil recordings (gaze, fixations, video) |
+| `player.py` | Plays back recordings with gaze overlay and note triggering |
+| `main.py` | CLI entry point for live tracking |
+
+### Data Flow for Note Triggering
+
+```
+Each frame:
+    → Extract gaze region from frame
+    → ColorAnalyzer.analyze() → ColorReading (midi_note, note, octave)
+    → NoteGate.update(midi_note) → True if note just stabilized
+    → If triggered: create NoteEvent, send to PureDataSink
+    → PureDataSink sends "note_on <midi> <brightness>" to Pd
+```
 
 ### Pure Data Patch
 
 | File | Purpose |
 |------|---------|
-| `color_music.pd` | MIDI note → frequency synthesis (uses mtof) |
+| `color_music.pd` | Receives `note_on` messages, ADSR envelope synthesis |
+
+Message format: `note_on <midi_note> <brightness>`
+- `midi_note`: 36-84 (C2-B6)
+- `brightness`: 0.0-1.0 (can be used for velocity)
 
 ## Critical Technical Knowledge
 
-### Color-to-Music Mapping
+### Content-Based Note Triggering (NoteGate)
 
-The `ColorAnalyzer` maps visible light wavelength to musical notes:
+`NoteGate` in `analyzer.py` replaces earlier velocity-gated and fixation-based approaches. It tracks the **MIDI note stream** directly instead of gaze position or velocity.
+
+**Why**: With a head-mounted eye tracker, gaze pixel position doesn't represent world position — the scene moves, not the gaze. Velocity-based gating fails because eyes compensate for head movement. NoteGate works by detecting when the *content* changes and stabilizes.
+
+**Parameters:**
+- `stable_frames` (default 4) — consecutive identical frames needed to trigger
+- `min_transition_frames` (default 3) — frames of different content needed before re-triggering the same note
+
+**Behavior:**
+- Fires on first stable note
+- Fires when note changes and stabilizes (saccade to new color)
+- Fires when same note returns after a real transition (head turn away and back)
+- Does NOT fire on brief 1-2 frame jitter (text on book covers)
+- Does NOT re-fire while resting on the same content
+
+### Color-to-Music Mapping (7-Note Major Scale)
 
 ```
 Color     Wavelength    OpenCV Hue    Note    Semitone
@@ -57,30 +91,31 @@ Blue      ~470nm        95-125        A       9
 Violet    ~400nm        125-165       B       11
 ```
 
-Brightness (HSV Value channel) maps to octave 2-6:
-- 0-51 → Octave 2
-- 51-102 → Octave 3
-- 102-153 → Octave 4
-- 153-204 → Octave 5
-- 204-255 → Octave 6
+Brightness (HSV Value channel) maps to octave 2-6.
 
 MIDI note calculation: `midi = (octave + 1) * 12 + semitone`
 
 ### Note/Octave Stability
 
-To prevent jarring jumps, note and octave detection use separate stability tracking:
+Parameters are tuned for responsive detection (reduced from earlier sluggish values):
 
-| Parameter | Note | Octave |
-|-----------|------|--------|
-| Frames | 8 | 15 |
-| Threshold | 70% | 80% |
-| Min agreement | 6/8 | 12/15 |
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `smoothing_window` | 3 | Frames to average for color smoothing |
+| `note_stability_frames` | 2 | Frames before note can change |
+| `octave_stability_frames` | 3 | Frames before octave can change |
+| `note_stability_threshold` | 0.5 | Agreement ratio for note change |
+| `octave_stability_threshold` | 0.5 | Agreement ratio for octave change |
+| `min_saturation` | 20 | Minimum saturation for hue detection |
 
-- **Note stability**: Faster response (8 frames, 70% threshold)
-- **Octave stability**: Slower response (15 frames, 80% threshold) to avoid jarring octave jumps
-- **Saturation threshold**: Pixels with saturation < 50 are excluded from hue calculation (gray pixels have unreliable hue)
+**Saturation threshold**: Lowered to 20 (from 50) to detect pastel colors (light pink, pale blue). Below 20 is typically gray/white where hue is meaningless.
 
-Configurable via CLI: `--note-stability`, `--octave-stability`, `--octave-threshold`
+### Binocular Gaze Handling
+
+For recordings with binocular data (separate gaze.3d.0 and gaze.3d.1 topics):
+- Prefers combined gaze (gaze.3d.01.) if available
+- Otherwise selects the eye with **highest average confidence**
+- Prevents flickering from interleaved left/right eye data
 
 ### ZMQ Real-Time Streaming
 
@@ -105,13 +140,13 @@ while True:
 - **Control port**: TCP 50020 (REQ/REP pattern)
 - **Data port**: Dynamic, obtained via `SUB_PORT` command
 - **Protocol**: ZeroMQ + MessagePack
-- **Topics**: `gaze.3d.*`, `frame.world`, `pupil.*`
+- **Topics**: `gaze.3d.*`, `frame.world`, `fixations`
 
 ### Gaze Data Format
 
 ```python
 {
-    "topic": "gaze.3d.0.",
+    "topic": "gaze.3d.01.",  # Combined binocular preferred
     "norm_pos": [0.5, 0.5],  # Normalized (0-1), origin at BOTTOM-LEFT
     "confidence": 0.85,       # 0-1, filter < 0.5
     "timestamp": 1234567.89,
@@ -121,6 +156,20 @@ while True:
 **Coordinate flip**: Pupil uses bottom-left origin, OpenCV uses top-left. Flip Y:
 ```python
 pixel_y = int((1.0 - norm_y) * height)
+```
+
+### Fixation Data Format
+
+```python
+{
+    "topic": "fixations",
+    "id": 42,
+    "timestamp": 1234567.89,
+    "duration": 150.0,        # ms
+    "norm_pos": [0.5, 0.5],
+    "dispersion": 1.2,        # degrees
+    "confidence": 0.9,
+}
 ```
 
 ### Frame Data Format
@@ -141,6 +190,22 @@ image_data = np.frombuffer(frame_bytes, dtype=np.uint8)
 frame = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
 ```
 
+## Session Transcripts
+
+This is a research project. All agent sessions should be logged for later review.
+
+**Transcript location:** `ai-transcripts/` in the repo root.
+
+**Do not read old transcripts** unless the user asks you to or you need the format as a reference. They are for human review, not agent context.
+
+When the user says **"make a transcript"**, write a summary of the current session to `ai-transcripts/YYYY-MM-DD-<topic>.md` following the format of existing transcripts in that folder.
+
+**Format:**
+- Header: date, model, tool, topic
+- Each user prompt reproduced verbatim under `### User`
+- Each assistant response condensed under `### Assistant`: summarize actions taken, key findings, and decisions — don't reproduce full tool output
+- End with a `## Summary of Changes` section listing files modified, key design decisions, and commit hashes
+
 ## Development Guidelines
 
 ### Python Standards
@@ -156,11 +221,15 @@ frame = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
 ```python
 # Good: Type hints, docstrings, frozen dataclasses
 @dataclass(frozen=True)
-class GazeData:
-    """Gaze data from Pupil Capture."""
+class NoteEvent:
+    """A discrete note trigger event from content-based gaze settling."""
     timestamp: float
-    norm_pos: tuple[float, float]
-    confidence: float
+    note: Note
+    octave: int
+    midi_note: int
+    brightness: float
+    center_x: int
+    center_y: int
 
 def process(data: GazeData) -> Result:
     """Process gaze data and return result."""
@@ -170,17 +239,26 @@ def process(data: GazeData) -> Result:
 ### Testing Commands
 
 ```bash
-# Run tracker with video
+# Run live tracker with video
 uv run pupil-tracker
 
+# Run with Pure Data output
+uv run pupil-tracker --pd
+
 # Run without video (headless)
-uv run pupil-tracker --no-video
+uv run pupil-tracker --no-video --pd
+
+# Play back a recording
+uv run gaze-player /path/to/recording
+
+# Play recording with Pure Data output
+uv run gaze-player /path/to/recording --pd
+
+# Play with gamma correction (for dark footage)
+uv run gaze-player /path/to/recording --gamma 0.5
 
 # Debug connection
 uv run python scripts/debug_connection.py
-
-# Use gtimeout to prevent hanging
-gtimeout 30 uv run pupil-tracker --no-video
 ```
 
 ### Debugging Tips
@@ -209,29 +287,34 @@ gtimeout 30 uv run pupil-tracker --no-video
 
 ## Future Work
 
-### Phase 1: Sound Refinement
-- Add more sophisticated synthesis in Pure Data (filters, ADSR envelopes)
-- Explore different scales/modes beyond major scale
-- Add saturation-based effects (more saturated = more intense sound)
+### Note Mapping Alternatives
 
-### Phase 2: Object Detection
+The current 7-note color mapping has practical challenges (lighting variations, mixed colors). Consider:
+
+1. **Spatial mapping** - Screen regions = notes (like a visual piano)
+2. **Pentatonic scale** - 5 notes (C,D,E,G,A) with bold colors, always sounds good
+3. **Color markers** - Dedicated colored targets for reliable detection
+4. **Hybrid** - Spatial for pitch, color for expression/timbre
+
+### Sound Refinement
+- Explore different scales/modes
+- Add saturation-based effects (more saturated = more intense sound)
+- Map fixation duration to note length or dynamics
+
+### Object Detection
 - Integrate YOLOv8 or similar for object detection
 - Intersect detected objects with gaze position
 - Map objects to sound characteristics
-
-### Phase 3: Custom Classification
-- Train custom model for specific materials/surfaces
-- Collect labeled training data from gaze sessions
-- Material-based sound textures
 
 ## Common Pitfalls
 
 1. **ZMQ buffering** - Always set `RCVHWM=1` and drain buffers
 2. **Coordinate systems** - Pupil uses bottom-left origin, flip Y for OpenCV
 3. **JPEG frames** - World camera sends JPEG, not raw BGR
-4. **High-frequency gaze** - Don't process every gaze message, sync to frame rate
-5. **Confidence filtering** - Always filter gaze with confidence < 0.5
-6. **Out-of-bounds gaze** - Some gaze values are outside 0-1 range, filter them
+4. **Binocular flickering** - Filter to combined gaze or best-confidence eye
+5. **Pastel colors** - Use low saturation threshold (20) to detect them
+7. **Confidence filtering** - Always filter gaze with confidence < 0.5
+8. **Out-of-bounds gaze** - Some gaze values are outside 0-1 range, filter them
 
 ## Quick Reference
 
@@ -239,33 +322,32 @@ gtimeout 30 uv run pupil-tracker --no-video
 # Install
 uv sync
 
-# Run tracker
+# Run live tracker
 uv run pupil-tracker
 
 # Run with Pure Data output
-uv run pupil-tracker --pd-fudi
+uv run pupil-tracker --pd
 
-# Run with options
-uv run pupil-tracker --region-size 100 --smoothing 10
+# Run with custom stability settings
+uv run pupil-tracker --pd --note-stability 2 --octave-stability 3
 
-# Test Pure Data connection (without Pupil hardware)
-uv run python scripts/test_puredata.py --fudi
+# Play recording
+uv run gaze-player /path/to/recording --pd
 
-# Test color grid (plays all notes systematically)
-uv run python scripts/test_color_grid.py --fudi --auto
-
-# Generate calibration test images
-uv run python scripts/generate_test_image.py
+# Test Pure Data connection
+uv run python scripts/test_puredata.py
 
 # Debug Pupil connection
 uv run python scripts/debug_connection.py
 ```
 
-## Test Scripts
+## Key Files for Note Triggering
 
-| Script | Purpose |
-|--------|---------|
-| `test_puredata.py` | Test Pure Data connection (cycles through colors) |
-| `test_color_grid.py` | Play through entire color-brightness grid (rows then columns) |
-| `generate_test_image.py` | Generate calibration images (7×5 grid + rainbow strip) |
-| `debug_connection.py` | Debug Pupil Capture ZMQ connection |
+If working on note triggering logic:
+
+| File | What's There |
+|------|--------------|
+| `analyzer.py` | NoteGate class, NoteEvent dataclass, ColorAnalyzer |
+| `main.py` | Live tracking loop with NoteGate integration |
+| `player.py` | Recording playback with NoteGate integration |
+| `output.py` | PureDataSink class, sends `note_on` to Pure Data |

@@ -53,6 +53,7 @@ class ColorReading:
     note: Note  # Musical note from color
     octave: int  # Octave from brightness (2-6)
     midi_note: int  # Combined MIDI note number
+    raw_midi_note: int  # Pre-stability MIDI note (for transition detection)
     hue: float | None  # Raw hue value (0-179), None if saturation too low
     smoothed_hue: float  # Smoothed hue for display
     saturation: float  # Color saturation (0-255)
@@ -83,14 +84,13 @@ class NoteEvent:
 class NoteGate:
     """Triggers notes when the detected MIDI note stabilizes after a real transition.
 
-    Tracks the midi_note stream instead of gaze velocity. This works correctly
-    with head-mounted eye trackers where gaze pixel position doesn't represent
-    world position (the scene moves, not the gaze).
+    Tracks the midi_note stream and uses fixation events from Pupil Capture
+    to detect when gaze lands on a new object (even if it's the same color).
 
     Fires when:
     - A new note appears and is stable for `stable_frames` consecutive frames
     - The same note reappears after `min_transition_frames` of different content
-      (e.g., head turn away and back to the same color)
+    - A new fixation starts (new object, possibly same color)
 
     Does NOT fire when:
     - Gaze rests on the same content (deduplication)
@@ -104,13 +104,30 @@ class NoteGate:
         self._last_triggered: int | None = None
         self._diff_streak: int = 0
         self._transition_detected: bool = False
+        self._last_fixation_id: int | None = None
 
-    def update(self, midi_note: int) -> bool:
-        """Feed a new midi_note. Returns True if note just stabilized (trigger)."""
+    def new_fixation(self, fixation_id: int) -> None:
+        """Signal that a new fixation started (new object of interest)."""
+        if self._last_fixation_id is not None and fixation_id != self._last_fixation_id:
+            self._transition_detected = True
+        self._last_fixation_id = fixation_id
+
+    def update(self, midi_note: int, raw_midi_note: int | None = None) -> bool:
+        """Feed a new midi_note. Returns True if note just stabilized (trigger).
+
+        Args:
+            midi_note: The stable (post-smoothing) MIDI note.
+            raw_midi_note: The raw (pre-smoothing) MIDI note. Used to detect
+                transitions between objects of the same color — the raw note
+                flickers during saccades even when the stable note stays put.
+        """
         self._recent.append(midi_note)
 
+        # Use raw note for transition detection (falls back to stable if not provided)
+        detect_note = raw_midi_note if raw_midi_note is not None else midi_note
+
         # Track consecutive frames different from last triggered note
-        if self._last_triggered is not None and midi_note != self._last_triggered:
+        if self._last_triggered is not None and detect_note != self._last_triggered:
             self._diff_streak += 1
             if self._diff_streak >= self.min_transition_frames:
                 self._transition_detected = True
@@ -345,16 +362,16 @@ class ColorAnalyzer:
     def _brightness_to_octave(self, brightness: float) -> int:
         """Convert brightness (0-255) to an octave number.
 
-        Args:
-            brightness: Brightness value (0-255).
-
-        Returns:
-            Octave number (MIN_OCTAVE to MAX_OCTAVE).
+        Octave 3 covers the combined range of what would be octaves 2 and 3
+        in a linear 5-octave mapping (~102 brightness values), giving more
+        room to differentiate the middle and upper octaves.
         """
-        # Map 0-255 to MIN_OCTAVE-MAX_OCTAVE
         octave_range = self.MAX_OCTAVE - self.MIN_OCTAVE
         octave = self.MIN_OCTAVE + int(brightness / 255 * octave_range)
-        return min(max(octave, self.MIN_OCTAVE), self.MAX_OCTAVE)
+        octave = min(max(octave, self.MIN_OCTAVE), self.MAX_OCTAVE)
+        if octave == 2:
+            octave = 3
+        return octave
 
     def _get_stable_octave(self, raw_octave: int) -> int:
         """Get stable octave with hysteresis to prevent rapid changes.
@@ -414,13 +431,15 @@ class ColorAnalyzer:
 
         if region.size == 0:
             # Return default values for empty region
+            current_midi = self._calculate_midi_note(
+                self._current_note, self._current_octave
+            )
             return ColorReading(
                 timestamp=gaze_region.timestamp,
                 note=self._current_note,
                 octave=self._current_octave,
-                midi_note=self._calculate_midi_note(
-                    self._current_note, self._current_octave
-                ),
+                midi_note=current_midi,
+                raw_midi_note=current_midi,
                 hue=0.0,
                 smoothed_hue=0.0,
                 saturation=0.0,
@@ -477,14 +496,19 @@ class ColorAnalyzer:
         raw_octave = self._brightness_to_octave(smoothed_brightness)
         stable_octave = self._get_stable_octave(raw_octave)
 
-        # Calculate MIDI note
+        # Calculate MIDI notes (stable for output, raw for transition detection)
         midi_note = self._calculate_midi_note(stable_note, stable_octave)
+        raw_note_val = self._hue_to_note(raw_hue) if raw_hue is not None else stable_note
+        raw_midi_note = self._calculate_midi_note(
+            raw_note_val, self._brightness_to_octave(raw_value)
+        )
 
         return ColorReading(
             timestamp=gaze_region.timestamp,
             note=stable_note,
             octave=stable_octave,
             midi_note=midi_note,
+            raw_midi_note=raw_midi_note,
             hue=raw_hue,
             smoothed_hue=smoothed_hue,
             saturation=smoothed_saturation,

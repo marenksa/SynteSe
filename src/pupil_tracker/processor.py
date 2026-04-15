@@ -146,45 +146,4 @@ class FrameProcessor:
             confidence=gaze.confidence,
         )
 
-    def get_frame_with_overlay(self) -> NDArray[np.uint8] | None:
-        """Get the current frame with gaze overlay drawn.
-
-        Returns:
-            Frame with gaze circle and region box drawn, or None if no frame.
-        """
-        if self._last_frame is None:
-            return None
-
-        import cv2
-
-        # Make a copy to draw on
-        frame = self._last_frame.data.copy()
-
-        if self._last_gaze is not None:
-            gaze = self._last_gaze
-            pixel_x, pixel_y = self.norm_to_pixel(
-                gaze.norm_pos[0],
-                gaze.norm_pos[1],
-                self._last_frame.width,
-                self._last_frame.height,
-            )
-
-            # Draw gaze circle
-            color = (0, 255, 0)  # Green for high confidence
-            if gaze.confidence < 0.6:
-                color = (0, 165, 255)  # Orange for low confidence
-            if gaze.confidence < 0.3:
-                color = (0, 0, 255)  # Red for very low confidence
-
-            cv2.circle(frame, (pixel_x, pixel_y), 10, color, 2)
-
-            # Draw region box
-            half_size = self._region_size // 2
-            x1 = max(0, pixel_x - half_size)
-            y1 = max(0, pixel_y - half_size)
-            x2 = min(self._last_frame.width, pixel_x + half_size)
-            y2 = min(self._last_frame.height, pixel_y + half_size)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
-
-        return frame
 

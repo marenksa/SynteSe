@@ -3,7 +3,7 @@
 import socket
 from typing import Protocol
 
-from pupil_tracker.analyzer import ColorReading, Note, NoteEvent
+from pupil_tracker.analyzer import ColorReading, NoteEvent
 
 
 class OutputSink(Protocol):
@@ -68,16 +68,7 @@ class MultiSink:
             sink.close()
 
 
-# Color name lookup for display
-NOTE_COLORS = {
-    Note.C: "Red",
-    Note.D: "Orange",
-    Note.E: "Yellow",
-    Note.F: "Green",
-    Note.G: "Cyan",
-    Note.A: "Blue",
-    Note.B: "Violet",
-}
+from pupil_tracker.overlay import NOTE_COLOR_NAMES
 
 
 class ColorConsoleSink:
@@ -94,7 +85,7 @@ class ColorConsoleSink:
     def emit(self, reading: ColorReading) -> None:
         """Print a color reading to the console."""
         note_name = reading.note.name
-        color_name = NOTE_COLORS.get(reading.note, "Unknown")
+        color_name = NOTE_COLOR_NAMES.get(reading.note, "Unknown")
 
         if self._verbose:
             hue_str = f"{reading.hue:.0f}" if reading.hue is not None else "N/A"

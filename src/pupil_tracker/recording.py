@@ -12,29 +12,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Eye closure detection tuning constants
-CONFIDENCE_THRESHOLD = 0.5
-MIN_CLOSURE_MS_BINOCULAR = 50
-MIN_CLOSURE_MS_MONOCULAR = 50  # Safe with clean-entry filter
+# Blink classification thresholds
 BLINK_MAX_MS = 400
 INTENTIONAL_MIN_MS = 500
-BINOCULAR_SYNC_TOLERANCE_S = 0.015  # 15ms
-GAP_BRIDGE_SAMPLES = 2  # Bridge gaps of ≤2 high-confidence samples between low runs
-CLEAN_ENTRY_WINDOW_S = 0.2  # 200ms window before onset to check for stable tracking
-CLEAN_ENTRY_MIN_CONFIDENCE = 0.8  # Mean confidence required in pre-onset window
 
-# Flutter detection tuning constants
-FLUTTER_WINDOW_S = 3.0  # Sliding window size
-FLUTTER_MIN_CROSSINGS = 10  # Min high→low transitions in window to qualify
-FLUTTER_STEP_S = 0.5  # Window step size (every 0.5s)
-FLUTTER_SMOOTH_S = 0.03  # Median filter width to suppress single-frame noise
-FLUTTER_HIGH_THRESH = 0.6  # Confidence must rise above this to "arm" a crossing
-FLUTTER_LOW_THRESH = 0.3  # Confidence must drop below this to count a crossing
-FLUTTER_MIN_CROSSING_GAP_S = 0.1  # Debounce: min time between counted crossings
+# Flutter detection from rapid blink bursts
+FLUTTER_WINDOW_S = 1.5  # Sliding window size
+FLUTTER_MIN_BLINKS = 4  # Min blink onsets in window to qualify as flutter
 
 
-class EyeClosureType(Enum):
-    """Classification of eye closure events by duration."""
+class BlinkType(Enum):
+    """Classification of blink events by duration."""
 
     BLINK = "blink"  # <400ms
     INTENTIONAL = "intentional"  # >500ms
@@ -42,23 +30,12 @@ class EyeClosureType(Enum):
 
 
 @dataclass
-class EyeClosureEvent:
-    """An eye closure event detected from pupil confidence drops."""
-
-    timestamp: float
-    duration_ms: float
-    closure_type: EyeClosureType
-    binocular: bool  # True if both eyes confirmed low confidence
-
-
-@dataclass
 class FlutterEvent:
-    """A rapid eye flutter burst detected from confidence oscillations."""
+    """A rapid eye flutter burst detected from rapid blink onsets."""
 
     timestamp: float  # Start of the flutter burst
     duration_s: float  # How long the flutter pattern lasted
-    crossing_count: int  # Number of high→low crossings detected
-    crossing_rate: float  # Crossings per second
+    blink_count: int  # Number of blinks in the burst
 
 
 @dataclass
@@ -85,13 +62,25 @@ class GazeSample:
     confidence: float
 
 
+def classify_blink(duration_ms: float) -> BlinkType:
+    """Classify a blink by its duration."""
+    if duration_ms < 0:
+        return BlinkType.BLINK  # Unpaired onset, assume normal blink
+    if duration_ms <= BLINK_MAX_MS:
+        return BlinkType.BLINK
+    if duration_ms >= INTENTIONAL_MIN_MS:
+        return BlinkType.INTENTIONAL
+    return BlinkType.AMBIGUOUS
+
+
 @dataclass
 class BlinkSample:
     """A blink event paired from onset/offset detections."""
 
     timestamp: float  # Onset timestamp
-    duration_ms: float  # Duration in milliseconds (0 if no offset detected)
+    duration_ms: float  # Duration in milliseconds (-1 if no offset detected)
     confidence: float  # Average confidence of onset/offset
+    blink_type: BlinkType = BlinkType.BLINK  # Classification by duration
 
 
 @dataclass
@@ -129,19 +118,12 @@ class Recording:
         # Load fixation data
         self.fixation_data = self._load_fixation_data()
 
-        # Load blink data
+        # Load blink data (with duration classification)
         self.blink_data = self._load_blink_data()
         self.blink_timestamps = np.array([b.timestamp for b in self.blink_data])
 
-        # Eye closure detection (confidence-based)
-        self._pupil_confidence = self._load_pupil_confidence()
-        self.eye_closure_data = self._detect_eye_closures()
-        self.eye_closure_timestamps = np.array(
-            [e.timestamp for e in self.eye_closure_data]
-        ) if self.eye_closure_data else np.array([])
-
-        # Flutter detection (confidence oscillation)
-        self.flutter_data = self._detect_flutter()
+        # Flutter detection from rapid blink bursts
+        self.flutter_data = self._detect_flutter_from_blinks()
         self.flutter_timestamps = np.array(
             [f.timestamp for f in self.flutter_data]
         ) if self.flutter_data else np.array([])
@@ -340,8 +322,7 @@ class Recording:
             ))
             i = j
 
-        # Pair onset clusters with the next offset cluster (if within 500ms)
-        max_blink_duration = 0.5  # seconds — beyond this, don't pair
+        # Pair each onset with the next offset (no duration cap — let classification handle it)
         blinks: list[BlinkSample] = []
         i = 0
         while i < len(clusters):
@@ -352,7 +333,6 @@ class Recording:
                 if (
                     i + 1 < len(clusters)
                     and clusters[i + 1][0] == "offset"
-                    and clusters[i + 1][1] - onset_ts < max_blink_duration
                 ):
                     offset_ts = clusters[i + 1][1]
                     offset_conf = clusters[i + 1][2]
@@ -362,6 +342,7 @@ class Recording:
                         timestamp=onset_ts,
                         duration_ms=duration_ms,
                         confidence=avg_conf,
+                        blink_type=classify_blink(duration_ms),
                     ))
                     i += 2
                 else:
@@ -370,6 +351,7 @@ class Recording:
                         timestamp=onset_ts,
                         duration_ms=-1,
                         confidence=onset_conf,
+                        blink_type=BlinkType.BLINK,
                     ))
                     i += 1
             else:
@@ -377,204 +359,52 @@ class Recording:
 
         return blinks
 
-    def _load_pupil_confidence(self) -> dict[int, tuple[np.ndarray, np.ndarray]]:
-        """Load per-eye pupil confidence from pupil.pldata.
+    def _detect_flutter_from_blinks(self) -> list[FlutterEvent]:
+        """Detect flutter as bursts of rapid blinks (3+ in 2s window).
 
-        Returns:
-            Dict mapping eye_id (0 or 1) to (timestamps, confidences) arrays.
+        Uses causal detection: simulates what a real-time streaming tracker
+        would see. A flutter is detected at the moment the Nth blink arrives
+        (not retroactively from the first blink), and ends when the window
+        no longer qualifies.
         """
-        pupil_path = self.path / "pupil.pldata"
-        if not pupil_path.exists():
-            return {}
-
-        samples: dict[int, list[tuple[float, float]]] = {0: [], 1: []}
-
-        with open(pupil_path, "rb") as f:
-            unpacker = msgpack.Unpacker(f, raw=False, strict_map_key=False)
-            for topic, payload in unpacker:
-                # Only use 2d detector results
-                if topic not in ("pupil.0.2d", "pupil.1.2d"):
-                    continue
-                data = msgpack.unpackb(payload, raw=False, strict_map_key=False)
-                eye_id = data.get("id", 0)
-                if eye_id in samples:
-                    samples[eye_id].append((
-                        data.get("timestamp", 0.0),
-                        data.get("confidence", 0.0),
-                    ))
-
-        result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-        for eye_id, eye_samples in samples.items():
-            if eye_samples:
-                eye_samples.sort(key=lambda s: s[0])
-                timestamps = np.array([s[0] for s in eye_samples])
-                confidences = np.array([s[1] for s in eye_samples])
-                result[eye_id] = (timestamps, confidences)
-
-        return result
-
-    def _detect_eye_closures(self) -> list[EyeClosureEvent]:
-        """Detect eye closure events from pupil confidence data.
-
-        Uses binocular confirmation when both eyes are available (requiring both
-        eyes to show low confidence simultaneously), falling back to monocular
-        detection with a higher minimum duration threshold.
-        """
-        if not self._pupil_confidence:
+        if len(self.blink_data) < FLUTTER_MIN_BLINKS:
             return []
 
-        has_eye0 = 0 in self._pupil_confidence
-        has_eye1 = 1 in self._pupil_confidence
-
-        if has_eye0 and has_eye1:
-            return self._detect_binocular_closures()
-        elif has_eye0:
-            logger.warning(
-                "Only eye0 available — using monocular closure detection "
-                "(higher false-positive rate)"
-            )
-            return self._detect_monocular_closures(eye_id=0)
-        elif has_eye1:
-            logger.warning(
-                "Only eye1 available — using monocular closure detection "
-                "(higher false-positive rate)"
-            )
-            return self._detect_monocular_closures(eye_id=1)
-        return []
-
-    @staticmethod
-    def _median_filter_1d(arr: np.ndarray, size: int) -> np.ndarray:
-        """Simple 1D median filter (no scipy dependency)."""
-        half = size // 2
-        result = np.empty_like(arr)
-        padded = np.pad(arr, half, mode="edge")
-        for i in range(len(arr)):
-            result[i] = np.median(padded[i : i + size])
-        return result
-
-    def _detect_flutter(self) -> list[FlutterEvent]:
-        """Detect rapid eye flutter from confidence signal oscillations.
-
-        Pipeline:
-        1. Median-filter the confidence signal (~30ms) to remove single-frame noise
-        2. Apply hysteresis thresholding (must rise above 0.6 then drop below 0.3)
-        3. Debounce crossings (min 100ms apart — a real blink cycle is ≥150ms)
-        4. Count crossings in sliding windows, merge overlapping qualifying windows
-
-        This is conservative: normal blinking, tracking noise, and sustained closure
-        should NOT trigger flutter. Only deliberate rapid fluttering (~4 Hz) should.
-        """
-        if 0 not in self._pupil_confidence:
-            logger.info("[Recording] Flutter detection: skipped (no eye0 data)")
-            return []
-
-        timestamps, confidences = self._pupil_confidence[0]
-        if len(timestamps) < 2:
-            logger.info("[Recording] Flutter detection: skipped (insufficient samples)")
-            return []
-
-        # Step 1: Median filter to suppress single-frame tracking glitches
-        dt = float(np.median(np.diff(timestamps)))
-        sample_rate = 1.0 / dt if dt > 0 else 120.0
-        kernel = max(3, int(FLUTTER_SMOOTH_S * sample_rate) | 1)  # Ensure odd
-        smoothed = self._median_filter_1d(confidences, kernel)
-
-        # Step 2+3: Hysteresis crossing detection with debounce
-        armed = smoothed[0] >= FLUTTER_HIGH_THRESH
-        crossing_times_list: list[float] = []
-        last_crossing_t = -999.0
-        for i in range(1, len(smoothed)):
-            if armed and smoothed[i] < FLUTTER_LOW_THRESH:
-                t = timestamps[i]
-                if t - last_crossing_t >= FLUTTER_MIN_CROSSING_GAP_S:
-                    crossing_times_list.append(t)
-                    last_crossing_t = t
-                armed = False
-            elif not armed and smoothed[i] >= FLUTTER_HIGH_THRESH:
-                armed = True
-
-        crossing_times = np.array(crossing_times_list) if crossing_times_list else np.array([])
-
-        if len(crossing_times) == 0:
-            logger.info(
-                "[Recording] Flutter detection: 0 events (%.1fs recording, "
-                "eye0 only, 0 crossings total)",
-                self.duration_s,
-            )
-            return []
-
-        logger.debug(
-            "[Recording] Flutter detection: %d debounced crossings (kernel=%d, %.0f Hz)",
-            len(crossing_times),
-            kernel,
-            sample_rate,
-        )
-
-        # Step 4: Slide window and find qualifying windows
-        rec_start = timestamps[0]
-        rec_end = timestamps[-1]
-        qualifying_windows: list[tuple[float, float, int]] = []  # (start, end, count)
-
-        window_start = rec_start
-        while window_start + FLUTTER_WINDOW_S <= rec_end:
-            window_end = window_start + FLUTTER_WINDOW_S
-            # Count crossings in this window
-            mask = (crossing_times >= window_start) & (crossing_times < window_end)
-            count = int(np.sum(mask))
-            if count >= FLUTTER_MIN_CROSSINGS:
-                qualifying_windows.append((window_start, window_end, count))
-            window_start += FLUTTER_STEP_S
-
-        if not qualifying_windows:
-            logger.info(
-                "[Recording] Flutter detection: 0 events (%.1fs recording, "
-                "eye0 only, %d crossings total)",
-                self.duration_s,
-                len(crossing_times),
-            )
-            return []
-
-        # Merge overlapping qualifying windows into contiguous events
+        blink_ts = self.blink_timestamps
         events: list[FlutterEvent] = []
-        merge_start, merge_end, merge_max = qualifying_windows[0]
-        for w_start, w_end, w_count in qualifying_windows[1:]:
-            if w_start <= merge_end:
-                # Overlapping — extend
-                merge_end = max(merge_end, w_end)
-                merge_max = max(merge_max, w_count)
+        flutter_start: float | None = None
+        flutter_count = 0
+
+        for i, ts in enumerate(blink_ts):
+            # Count blinks in the trailing window ending at this blink
+            window_start = ts - FLUTTER_WINDOW_S
+            count = int(np.sum((blink_ts >= window_start) & (blink_ts <= ts)))
+
+            if count >= FLUTTER_MIN_BLINKS:
+                if flutter_start is None:
+                    # Flutter just became detectable at this blink
+                    flutter_start = ts
+                flutter_count = max(flutter_count, count)
             else:
-                # Gap — emit previous and start new
-                duration = merge_end - merge_start
-                events.append(FlutterEvent(
-                    timestamp=merge_start,
-                    duration_s=duration,
-                    crossing_count=merge_max,
-                    crossing_rate=merge_max / FLUTTER_WINDOW_S,
-                ))
-                merge_start, merge_end, merge_max = w_start, w_end, w_count
+                if flutter_start is not None:
+                    # Flutter just ended
+                    events.append(FlutterEvent(
+                        timestamp=flutter_start,
+                        duration_s=blink_ts[i - 1] - flutter_start + 0.2,
+                        blink_count=flutter_count,
+                    ))
+                    flutter_start = None
+                    flutter_count = 0
 
-        # Emit last merged window
-        duration = merge_end - merge_start
-        events.append(FlutterEvent(
-            timestamp=merge_start,
-            duration_s=duration,
-            crossing_count=merge_max,
-            crossing_rate=merge_max / FLUTTER_WINDOW_S,
-        ))
+        # Close any open flutter at end of recording
+        if flutter_start is not None:
+            events.append(FlutterEvent(
+                timestamp=flutter_start,
+                duration_s=blink_ts[-1] - flutter_start + 0.2,
+                blink_count=flutter_count,
+            ))
 
-        # Log results
-        logger.info(
-            "[Recording] Flutter detection: %d event(s)", len(events)
-        )
-        for evt in events:
-            logger.info(
-                "  Flutter at %.1fs: %.1fs duration, %d crossings (%.1f/s)",
-                evt.timestamp - self.start_time_s,
-                evt.duration_s,
-                evt.crossing_count,
-                evt.crossing_rate,
-            )
-
+        logger.info("[Recording] Flutter detection: %d event(s)", len(events))
         return events
 
     def get_flutter_at_timestamp(self, timestamp: float) -> FlutterEvent | None:
@@ -584,159 +414,12 @@ class Recording:
 
         idx = int(np.searchsorted(self.flutter_timestamps, timestamp))
 
-        # Check nearby events
         for i in range(max(0, idx - 1), min(len(self.flutter_data), idx + 1)):
             event = self.flutter_data[i]
             if event.timestamp <= timestamp <= event.timestamp + event.duration_s:
                 return event
 
         return None
-
-    def _detect_binocular_closures(self) -> list[EyeClosureEvent]:
-        """Detect closures requiring both eyes below threshold simultaneously."""
-        ts0, conf0 = self._pupil_confidence[0]
-        ts1, conf1 = self._pupil_confidence[1]
-
-        # For each eye0 sample, find nearest eye1 sample and check both
-        low0 = conf0 < CONFIDENCE_THRESHOLD
-
-        # Find nearest eye1 confidence for each eye0 timestamp
-        indices1 = np.searchsorted(ts1, ts0)
-        indices1 = np.clip(indices1, 0, len(ts1) - 1)
-
-        # Check if nearest eye1 sample is within sync tolerance
-        time_diffs = np.abs(ts1[indices1] - ts0)
-        synced = time_diffs < BINOCULAR_SYNC_TOLERANCE_S
-
-        # Both eyes must be low and synced
-        low1_at_eye0 = conf1[indices1] < CONFIDENCE_THRESHOLD
-        both_low = low0 & low1_at_eye0 & synced
-
-        return self._extract_closure_runs(
-            ts0, conf0, both_low, MIN_CLOSURE_MS_BINOCULAR, binocular=True
-        )
-
-    def _detect_monocular_closures(self, eye_id: int) -> list[EyeClosureEvent]:
-        """Detect closures from a single eye with clean-entry filtering."""
-        timestamps, confidences = self._pupil_confidence[eye_id]
-        low = confidences < CONFIDENCE_THRESHOLD
-
-        return self._extract_closure_runs(
-            timestamps, confidences, low, MIN_CLOSURE_MS_MONOCULAR, binocular=False
-        )
-
-    @staticmethod
-    def _bridge_gaps(low_mask: np.ndarray) -> np.ndarray:
-        """Bridge small gaps of high-confidence samples between low runs.
-
-        A real blink can have 1-2 frame tracking "flickers" mid-closure.
-        This merges low runs separated by ≤GAP_BRIDGE_SAMPLES high samples.
-        """
-        if GAP_BRIDGE_SAMPLES <= 0:
-            return low_mask
-
-        result = low_mask.copy()
-        # Find transitions: low→high (potential gap start) and high→low (gap end)
-        i = 0
-        n = len(result)
-        while i < n:
-            if result[i]:
-                # In a low run — find its end
-                run_end = i
-                while run_end < n and result[run_end]:
-                    run_end += 1
-                # run_end is now the first high sample after the low run
-                # Check if there's a small gap followed by another low run
-                gap_end = run_end
-                while gap_end < n and not result[gap_end]:
-                    gap_end += 1
-                gap_size = gap_end - run_end
-                if 0 < gap_size <= GAP_BRIDGE_SAMPLES and gap_end < n:
-                    # Bridge the gap
-                    result[run_end:gap_end] = True
-                    # Don't advance i — re-check from the merged run
-                    continue
-                i = run_end
-            else:
-                i += 1
-
-        return result
-
-    @staticmethod
-    def _has_clean_entry(
-        timestamps: np.ndarray,
-        confidences: np.ndarray,
-        onset_idx: int,
-    ) -> bool:
-        """Check that tracking was stable before the closure onset.
-
-        Real blinks are sharp drops from confident tracking. Noise periods
-        have sustained low/unstable confidence beforehand.
-        """
-        onset_ts = timestamps[onset_idx]
-        window_start_ts = onset_ts - CLEAN_ENTRY_WINDOW_S
-
-        # Find samples in the pre-onset window
-        start_idx = int(np.searchsorted(timestamps, window_start_ts))
-        pre_window = confidences[start_idx:onset_idx]
-
-        if len(pre_window) < 3:
-            # Not enough data before onset — allow it (could be start of recording)
-            return True
-
-        return float(np.mean(pre_window)) >= CLEAN_ENTRY_MIN_CONFIDENCE
-
-    @staticmethod
-    def _extract_closure_runs(
-        timestamps: np.ndarray,
-        confidences: np.ndarray,
-        low_mask: np.ndarray,
-        min_duration_ms: float,
-        binocular: bool,
-    ) -> list[EyeClosureEvent]:
-        """Find contiguous runs of low confidence and classify them."""
-        if not np.any(low_mask):
-            return []
-
-        # Bridge small gaps to merge fragmented blinks
-        bridged = Recording._bridge_gaps(low_mask)
-
-        # Find run boundaries using diff on boolean array
-        padded = np.concatenate(([False], bridged, [False]))
-        diff = np.diff(padded.astype(np.int8))
-        starts = np.where(diff == 1)[0]
-        ends = np.where(diff == -1)[0]
-
-        events: list[EyeClosureEvent] = []
-        for start_idx, end_idx in zip(starts, ends):
-            if end_idx > len(timestamps) - 1:
-                end_idx = len(timestamps) - 1
-            onset_ts = timestamps[start_idx]
-            offset_ts = timestamps[min(end_idx, len(timestamps) - 1)]
-            duration_ms = (offset_ts - onset_ts) * 1000
-
-            if duration_ms < min_duration_ms:
-                continue
-
-            # Clean entry filter: require stable tracking before the dip
-            if not Recording._has_clean_entry(timestamps, confidences, start_idx):
-                continue
-
-            if duration_ms <= BLINK_MAX_MS:
-                closure_type = EyeClosureType.BLINK
-            elif duration_ms >= INTENTIONAL_MIN_MS:
-                closure_type = EyeClosureType.INTENTIONAL
-            else:
-                closure_type = EyeClosureType.AMBIGUOUS
-
-            events.append(EyeClosureEvent(
-                timestamp=onset_ts,
-                duration_ms=duration_ms,
-                closure_type=closure_type,
-                binocular=binocular,
-            ))
-
-        return events
 
     def _load_eye_timestamps(self) -> None:
         """Load eye camera timestamps for sync."""
@@ -792,25 +475,6 @@ class Recording:
             duration_s = blink.duration_ms / 1000.0 if blink.duration_ms >= 0 else 0.2
             if blink.timestamp <= timestamp <= blink.timestamp + duration_s:
                 return blink
-
-        return None
-
-    def get_eye_closure_at_timestamp(self, timestamp: float) -> EyeClosureEvent | None:
-        """Get an eye closure event active at the given timestamp.
-
-        Returns the closure if timestamp falls within the event's duration.
-        """
-        if not self.eye_closure_data:
-            return None
-
-        idx = int(np.searchsorted(self.eye_closure_timestamps, timestamp))
-
-        # Check nearby events
-        for i in range(max(0, idx - 1), min(len(self.eye_closure_data), idx + 1)):
-            event = self.eye_closure_data[i]
-            duration_s = event.duration_ms / 1000.0
-            if event.timestamp <= timestamp <= event.timestamp + duration_s:
-                return event
 
         return None
 

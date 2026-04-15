@@ -2,150 +2,29 @@
 
 import argparse
 import sys
+import time
 
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteGate
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, NoteEvent, NoteGate
 from pupil_tracker.client import PupilCaptureClient
+from pupil_tracker.eye_events import StreamingBlinkTracker
 from pupil_tracker.output import (
     ColorConsoleSink,
     MultiSink,
     PureDataSink,
 )
+from pupil_tracker.overlay import (
+    apply_gamma,
+    build_gamma_lut,
+    draw_brightness_bar,
+    draw_color_info,
+    draw_eye_panel,
+    draw_gaze_crosshair,
+    draw_region_box,
+)
 from pupil_tracker.processor import FrameProcessor
-
-
-def draw_brightness_bar(
-    frame: np.ndarray,
-    brightness: float,
-    x: int = 10,
-    y: int = 30,
-    width: int = 200,
-    height: int = 20,
-) -> None:
-    """Draw a brightness meter on the frame.
-
-    Args:
-        frame: The frame to draw on (modified in place).
-        brightness: Brightness value (0-255).
-        x: X position of the bar.
-        y: Y position of the bar.
-        width: Width of the bar.
-        height: Height of the bar.
-    """
-    # Background
-    cv2.rectangle(frame, (x, y), (x + width, y + height), (50, 50, 50), -1)
-
-    # Filled portion
-    filled_width = int(brightness / 255 * width)
-    if filled_width > 0:
-        # Color gradient from dark blue to bright yellow
-        ratio = brightness / 255
-        color = (
-            int(50 + ratio * 50),  # B
-            int(50 + ratio * 200),  # G
-            int(50 + ratio * 200),  # R
-        )
-        cv2.rectangle(frame, (x, y), (x + filled_width, y + height), color, -1)
-
-    # Border
-    cv2.rectangle(frame, (x, y), (x + width, y + height), (200, 200, 200), 1)
-
-    # Text
-    cv2.putText(
-        frame,
-        f"Brightness: {brightness:.0f}",
-        (x + width + 10, y + height - 3),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (255, 255, 255),
-        1,
-    )
-
-
-# BGR colors for each note (matching the hue ranges)
-NOTE_BGR_COLORS: dict[Note, tuple[int, int, int]] = {
-    Note.C: (60, 60, 220),  # Red
-    Note.D: (60, 140, 255),  # Orange
-    Note.E: (60, 220, 255),  # Yellow
-    Note.F: (60, 180, 60),  # Green
-    Note.G: (180, 180, 60),  # Cyan
-    Note.A: (220, 120, 60),  # Blue
-    Note.B: (180, 60, 180),  # Violet
-}
-
-NOTE_COLOR_NAMES: dict[Note, str] = {
-    Note.C: "Red",
-    Note.D: "Orange",
-    Note.E: "Yellow",
-    Note.F: "Green",
-    Note.G: "Cyan",
-    Note.A: "Blue",
-    Note.B: "Violet",
-}
-
-
-def draw_color_info(
-    frame: np.ndarray,
-    color_reading: ColorReading,
-    x: int = 10,
-    y: int = 60,
-    size: int = 40,
-) -> None:
-    """Draw a color square and note name on the frame.
-
-    Args:
-        frame: The frame to draw on (modified in place).
-        color_reading: The color reading with note and color info.
-        x: X position of the square.
-        y: Y position of the square.
-        size: Size of the color square.
-    """
-    note = color_reading.note
-    octave = color_reading.octave
-    color = NOTE_BGR_COLORS.get(note, (128, 128, 128))
-    color_name = NOTE_COLOR_NAMES.get(note, "?")
-
-    # Draw color square with detected color
-    cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
-
-    # Draw border
-    cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
-
-    # Draw note name and octave
-    note_text = f"{note.name}{octave}"
-    cv2.putText(
-        frame,
-        note_text,
-        (x + size + 10, y + 18),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 255),
-        2,
-    )
-
-    # Draw color name below
-    cv2.putText(
-        frame,
-        color_name,
-        (x + size + 10, y + size - 5),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (180, 180, 180),
-        1,
-    )
-
-    # Draw MIDI note number
-    cv2.putText(
-        frame,
-        f"MIDI: {color_reading.midi_note}",
-        (x + size + 80, y + 18),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (180, 180, 180),
-        1,
-    )
 
 
 def run_tracker(
@@ -158,9 +37,10 @@ def run_tracker(
     pd: bool = False,
     pd_host: str = "127.0.0.1",
     pd_port: int = 9001,
-    note_stability: int = 8,
-    octave_stability: int = 15,
-    octave_threshold: float = 0.8,
+    note_stability: int = 2,
+    octave_stability: int = 3,
+    octave_threshold: float = 0.5,
+    gamma: float = 1.0,
 ) -> None:
     """Run the color-to-music tracker.
 
@@ -177,6 +57,7 @@ def run_tracker(
         note_stability: Frames for note stability.
         octave_stability: Frames for octave stability.
         octave_threshold: Agreement threshold for octave changes (0-1).
+        gamma: Gamma correction value (< 1.0 brightens, > 1.0 darkens).
     """
     # Initialize components
     processor = FrameProcessor(region_size=region_size)
@@ -186,6 +67,9 @@ def run_tracker(
         octave_stability_frames=octave_stability,
         octave_stability_threshold=octave_threshold,
     )
+
+    # Gamma correction
+    gamma_lut = build_gamma_lut(gamma)
 
     # Set up output sinks
     output = MultiSink()
@@ -199,6 +83,18 @@ def run_tracker(
     # Content-based note triggering
     note_gate = NoteGate()
 
+    # Streaming blink tracker (classifies blinks, detects flutter)
+    blink_tracker = StreamingBlinkTracker()
+
+    # Eye event display state
+    blink_flash_until = 0.0
+    last_blink_label: str | None = None
+    flutter_flash_until = 0.0
+    last_flutter_label: str | None = None
+
+    # Latest eye frame for display
+    latest_eye_frame: np.ndarray | None = None
+
     print("=" * 60)
     print("Pupil Color-to-Music Tracker")
     print("=" * 60)
@@ -209,6 +105,8 @@ def run_tracker(
     print("  Mode: COLOR → MUSIC (content-based note triggering)")
     if pd:
         print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
+    if gamma != 1.0:
+        print(f"  Gamma correction: {gamma}")
     print("=" * 60)
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
@@ -218,13 +116,58 @@ def run_tracker(
     try:
         with PupilCaptureClient(host=host, port=port) as client:
             for message in client.stream_realtime():
+                now = time.monotonic()
+
                 # Update gaze (may come with frame or alone)
                 if message.gaze is not None:
                     processor.update_gaze(message.gaze)
 
+                # New fixation = new object of interest
+                if message.fixation is not None:
+                    note_gate.new_fixation(message.fixation.id)
+
+                # Feed blink events to tracker
+                if message.blink is not None:
+                    b = message.blink
+                    blink_event, flutter_event = blink_tracker.update(
+                        b.blink_type, b.timestamp, b.confidence
+                    )
+                    if blink_event is not None:
+                        blink_flash_until = now + 0.3
+                        if blink_event.duration_ms >= 0:
+                            last_blink_label = (
+                                f"{blink_event.blink_type.value.upper()} "
+                                f"{blink_event.duration_ms:.0f}ms"
+                            )
+                        else:
+                            last_blink_label = "BLINK"
+
+                    if flutter_event is not None:
+                        flutter_flash_until = now + 0.3
+                        last_flutter_label = (
+                            f"FLUTTER {flutter_event.blink_count} blinks"
+                        )
+
+                # Store latest eye frame for display
+                if message.eye_frame is not None:
+                    latest_eye_frame = message.eye_frame.data
+
                 # Process on new frame (real-time, no buffering)
                 if message.frame is not None:
                     processor.update_frame(message.frame)
+
+                    # Apply gamma correction before analysis
+                    frame_data = message.frame.data
+                    if gamma != 1.0:
+                        frame_data = apply_gamma(frame_data, gamma_lut)
+                        # Update processor's frame with gamma-corrected data
+                        processor._last_frame = message.frame.__class__(
+                            timestamp=message.frame.timestamp,
+                            width=message.frame.width,
+                            height=message.frame.height,
+                            data=frame_data,
+                            topic=message.frame.topic,
+                        )
 
                     # Extract gaze region and analyze for display
                     gaze_region = processor.extract_region()
@@ -233,10 +176,11 @@ def run_tracker(
                         output.emit(color_reading)
                         last_reading = color_reading
 
-                        # Content-based note triggering
+                        # Content-based note triggering (suppressed during flutter)
                         if (
                             pd_sink is not None
-                            and note_gate.update(color_reading.midi_note)
+                            and not blink_tracker.is_flutter_active
+                            and note_gate.update(color_reading.midi_note, color_reading.raw_midi_note)
                         ):
                             note_event = NoteEvent(
                                 timestamp=color_reading.timestamp,
@@ -251,15 +195,52 @@ def run_tracker(
 
                     # Display video with overlay
                     if show_video:
-                        frame = processor.get_frame_with_overlay()
-                        if frame is not None:
-                            if last_reading is not None:
-                                draw_brightness_bar(
-                                    frame,
-                                    last_reading.smoothed_brightness,
-                                )
-                                draw_color_info(frame, last_reading)
-                            cv2.imshow("Pupil Color-to-Music", frame)
+                        frame = frame_data.copy()
+
+                        # Draw gaze crosshair and region box
+                        if processor.last_gaze is not None:
+                            gx, gy = processor.norm_to_pixel(
+                                processor.last_gaze.norm_pos[0],
+                                processor.last_gaze.norm_pos[1],
+                                message.frame.width,
+                                message.frame.height,
+                            )
+                            draw_gaze_crosshair(
+                                frame, gx, gy,
+                                processor.last_gaze.confidence,
+                            )
+                            draw_region_box(
+                                frame, gx, gy,
+                                region_size,
+                                processor.last_gaze.confidence,
+                            )
+
+                        # Draw color/brightness info
+                        if last_reading is not None:
+                            draw_brightness_bar(
+                                frame,
+                                last_reading.smoothed_brightness,
+                            )
+                            draw_color_info(frame, last_reading)
+
+                        # Draw eye camera panel with event indicators
+                        is_blink = now < blink_flash_until
+                        is_flutter = (
+                            now < flutter_flash_until
+                            or blink_tracker.is_flutter_active
+                        )
+                        draw_eye_panel(
+                            frame,
+                            latest_eye_frame,
+                            is_blink=is_blink,
+                            blink_label=last_blink_label if is_blink else None,
+                            is_flutter=is_flutter,
+                            flutter_label=last_flutter_label if is_flutter else None,
+                            blink_count=blink_tracker.blink_count,
+                            flutter_count=blink_tracker.flutter_count,
+                        )
+
+                        cv2.imshow("Pupil Color-to-Music", frame)
 
                         # Check for quit
                         key = cv2.waitKey(1) & 0xFF
@@ -323,6 +304,13 @@ def main() -> None:
         action="store_true",
         help="Enable verbose console output",
     )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=1.0,
+        help="Gamma correction value. Values < 1.0 brighten (e.g., 0.5), "
+        "values > 1.0 darken. Default: 1.0 (no correction)",
+    )
 
     # Stability options
     stability_group = parser.add_argument_group("Stability tuning")
@@ -380,6 +368,7 @@ def main() -> None:
         note_stability=args.note_stability,
         octave_stability=args.octave_stability,
         octave_threshold=args.octave_threshold,
+        gamma=args.gamma,
     )
 
 
