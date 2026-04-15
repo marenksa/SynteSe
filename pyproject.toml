@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 pupil-tracker = "pupil_tracker.main:main"
+gaze-player = "pupil_tracker.player:main"
 
 [dependency-groups]
 dev = []

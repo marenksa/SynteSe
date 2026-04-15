@@ -10,6 +10,7 @@ from pupil_tracker.output import (
     PureDataOSCSink,
 )
 from pupil_tracker.processor import FrameProcessor, GazeRegion
+from pupil_tracker.recording import GazeSample, Recording, RecordingInfo
 
 __version__ = "0.1.0"
 
@@ -32,4 +33,8 @@ __all__ = [
     "ColorConsoleSink",
     "PureDataOSCSink",
     "PureDataFUDISink",
+    # Recording playback
+    "Recording",
+    "RecordingInfo",
+    "GazeSample",
 ]
