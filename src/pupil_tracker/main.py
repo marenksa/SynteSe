@@ -114,6 +114,8 @@ def run_tracker(
     print()
 
     last_reading: ColorReading | None = None
+    latest_gaze_confidence: float = 0.0
+    noise_was_active: bool = False
 
     try:
         with PupilCaptureClient(host=host, port=port) as client:
@@ -123,6 +125,7 @@ def run_tracker(
                 # Update gaze (may come with frame or alone)
                 if message.gaze is not None:
                     processor.update_gaze(message.gaze)
+                    latest_gaze_confidence = message.gaze.confidence
 
                 # New fixation = new object of interest
                 if message.fixation is not None:
@@ -186,6 +189,14 @@ def run_tracker(
                         color_reading = analyzer.analyze(gaze_region)
                         output.emit(color_reading)
                         last_reading = color_reading
+
+                        if pd_sink is not None:
+                            noise_active = blink_tracker.is_eyes_closed or blink_tracker.is_flutter_active
+                            if noise_active:
+                                pd_sink.emit_confidence(latest_gaze_confidence)
+                            elif noise_was_active:
+                                pd_sink.emit_confidence(1.0)  # reset once on exit
+                            noise_was_active = noise_active
 
                         # Content-based note triggering (suppressed during flutter)
                         if (
@@ -267,6 +278,8 @@ def run_tracker(
     finally:
         output.close()
         if pd_sink is not None:
+            pd_sink.emit_confidence(1.0)
+            pd_sink.emit_am_lfo(0)
             pd_sink.close()
         if show_video:
             cv2.destroyAllWindows()

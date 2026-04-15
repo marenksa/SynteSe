@@ -93,6 +93,7 @@ class GazeVideoPlayer:
         # AM-LFO state: track flutter transitions and intentional blinks
         self._in_flutter = False
         self._last_intentional_ts: float = -1.0
+        self._noise_was_active: bool = False
 
     def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
         """Apply gamma correction to a frame using lookup table."""
@@ -312,6 +313,7 @@ class GazeVideoPlayer:
                 self._flutter_flash_until = 0.0
                 self._in_flutter = False
                 self._last_intentional_ts = -1.0
+                self._noise_was_active = False
 
             result = self.recording.read_next_frame()
             if result is None:
@@ -366,8 +368,15 @@ class GazeVideoPlayer:
                             )
                             self.pd_sink.emit(note_event)
 
-                # AM-LFO runs at frame level, independent of gaze confidence
+                # Confidence and AM-LFO run at frame level, independent of gaze confidence gate
                 if self.pd_sink is not None:
+                    in_blink = self.recording.get_blink_at_timestamp(world_ts) is not None
+                    noise_active = in_blink or in_flutter
+                    if noise_active:
+                        self.pd_sink.emit_confidence(gaze.confidence if gaze is not None else 0.0)
+                    elif self._noise_was_active:
+                        self.pd_sink.emit_confidence(1.0)  # reset once on exit
+                    self._noise_was_active = noise_active
                     if self._in_flutter and not in_flutter and self._last_flutter is not None:
                         self.pd_sink.emit_am_lfo(flutter_to_lfo(self._last_flutter.blink_count, FLUTTER_MIN_BLINKS))
 
@@ -572,6 +581,8 @@ def main() -> None:
         if output is not None:
             output.close()
         if pd_sink is not None:
+            pd_sink.emit_confidence(1.0)
+            pd_sink.emit_am_lfo(0)
             pd_sink.close()
 
 

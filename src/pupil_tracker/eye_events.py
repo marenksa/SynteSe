@@ -54,6 +54,11 @@ class StreamingBlinkTracker:
     def is_flutter_active(self) -> bool:
         return self._flutter_start is not None
 
+    @property
+    def is_eyes_closed(self) -> bool:
+        """True between blink onset and offset (eyes currently closed)."""
+        return self._pending_onset_ts is not None
+
     def update(
         self, blink_type: str, timestamp: float, confidence: float
     ) -> tuple[BlinkSample | None, FlutterEvent | None]:

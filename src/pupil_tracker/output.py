@@ -207,6 +207,14 @@ class PureDataSink:
         """
         self._send(f"am_amp {value};\n")
 
+    def emit_confidence(self, value: float) -> None:
+        """Send raw gaze confidence to Pure Data.
+
+        Args:
+            value: Gaze confidence, 0-1. Sent once per world camera frame (~30fps).
+        """
+        self._send(f"confidence {value:.3f};\n")
+
     def close(self) -> None:
         """Close the TCP connection."""
         if self._socket and self._connected:

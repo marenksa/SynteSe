@@ -206,6 +206,18 @@ When the user says **"make a transcript"**, write a summary of the current sessi
 - Each assistant response condensed under `### Assistant`: summarize actions taken, key findings, and decisions — don't reproduce full tool output
 - End with a `## Summary of Changes` section listing files modified, key design decisions, and commit hashes
 
+## Critical Rule: Tracker and Player Parity
+
+**`main.py` (live tracker) and `player.py` (recording player) must always have identical functionality.**
+
+Any feature, message, or behaviour added to one must be added to the other in the same session. This includes:
+- New Pd messages sent (e.g. `confidence`, `am_lfo`, `am_amp`)
+- Gating logic (e.g. only send during blink/flutter)
+- Cleanup/reset on exit
+- State variables related to Pd output
+
+Do not close a task or end a session with one file updated but not the other.
+
 ## Development Guidelines
 
 ### Python Standards
