@@ -47,14 +47,14 @@
 #X obj 50 627 AM-midi;
 #X text 284 181 <- Parse note_on or AM messages;
 #X floatatom 121 590 5 0 0 0 - - - 0;
-#X text 165 589 <- MIDI: 0 - 50;
-#X obj 291 589 hsl 162 19 0 50 0 0 am-lfo am-lfo LFO -2 -10 0 12 #c6ffc7 #000000 #000000 0 1;
+#X text 165 589 <- effect: 0 - 1;
+#X obj 291 589 hsl 162 19 0 1 0 0 effect effect effect -2 -10 0 12 #c6ffc7 #000000 #000000 0 1;
 #X msg 307 469 1 20 \, 0.75 80 20 \, 0 300 100;
 #X text 824 573 Octave 3 = Dark;
 #X obj 125 760 noise~;
 #X obj 134 801 *~;
 #X obj 195 760 hsl 162 19 0 1 0 0 empty empty empty -2 -10 0 12 #ffc7c6 #000000 #000000 0 1;
-#X obj 50 180 route note_on am_lfo confidence;
+#X obj 50 180 route note_on effect confidence;
 #X obj 192 728 expr 1 - $f1;
 #X obj 50 682 rev2~ 100 75;
 #X text 686 998 _;

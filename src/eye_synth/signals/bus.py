@@ -82,7 +82,7 @@ class OutputBus:
 
         Examples:
             outputs.send("note_on", 60, 0.8)
-            outputs.send("am_lfo", 12)
+            outputs.send("effect", 0.8)
             outputs.send("confidence", 0.95)
         """
         if self._pd is not None:

@@ -59,7 +59,7 @@ class PureDataSink:
 
     Use send() for generic messages from patches:
         sink.send("note_on", 60, 0.8)
-        sink.send("am_lfo", 12)
+        sink.send("effect", 0.8)
         sink.send("confidence", 0.95)
     """
 

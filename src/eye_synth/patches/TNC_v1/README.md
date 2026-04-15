@@ -30,10 +30,10 @@ A note triggers when the gaze settles on new content. This is handled by `NoteGa
 
 | Eye event | Effect | Pd message |
 |-----------|--------|------------|
-| Intentional blink (≥500ms) | Clears AM-LFO | `am_lfo 0` |
-| Flutter burst ends | Sets AM-LFO frequency | `am_lfo <hz>` |
+| Intentional blink (≥500ms) | Clears effect | `effect 0` |
+| Flutter burst ends | Sets effect value | `effect <0–1>` |
 
-**Flutter → AM-LFO:** blink count within the burst maps linearly to 1–50 Hz. 4 blinks = 1 Hz, 15 blinks = 50 Hz. The tremolo frequency rises with the intensity of the flutter.
+**Flutter → effect:** blink count within the burst maps linearly to 0–1. 0.0 at the minimum flutter threshold, 1.0 at twice that. The value rises with the intensity of the flutter. PD scales it as needed.
 
 **Note triggering is suppressed during active flutter** — use flutter as a distinct performance gesture.
 
@@ -51,7 +51,7 @@ This can be used to fade, mute, or modulate the sound while the gaze signal is u
 
 ```
 note_on <midi> <brightness>   →  triggers a note
-am_lfo <hz>                   →  sets amplitude modulation frequency (0 = off)
+effect <0–1>                  →  sets effect intensity (0 = off)
 confidence <0–1>              →  modulation/gate signal during noise
 ```
 

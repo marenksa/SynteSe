@@ -45,7 +45,7 @@ OutputBus (signals/bus.py)
 | `tracker.py` | Live entry point: gamma → pipeline.process_live() → overlay → patch |
 | `player.py` | Recording entry point: pipeline.process_recording_frame() → patch |
 | `patches/__init__.py` | Patch protocol + load_patch() factory |
-| `patches/color_music/` | Prototype: hue→note, brightness→octave, flutter→AM-LFO |
+| `patches/color_music/` | Prototype: hue→note, brightness→octave, flutter→effect |
 
 ### Signal Bus Fields
 
