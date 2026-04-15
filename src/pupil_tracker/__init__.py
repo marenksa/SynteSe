@@ -16,7 +16,15 @@ from pupil_tracker.output import (
     PureDataSink,
 )
 from pupil_tracker.processor import FrameProcessor, GazeRegion
-from pupil_tracker.recording import FixationSample, GazeSample, Recording, RecordingInfo
+from pupil_tracker.recording import (
+    BlinkSample,
+    EyeClosureEvent,
+    EyeClosureType,
+    FixationSample,
+    GazeSample,
+    Recording,
+    RecordingInfo,
+)
 
 __version__ = "0.1.0"
 
@@ -45,5 +53,8 @@ __all__ = [
     "Recording",
     "RecordingInfo",
     "GazeSample",
+    "BlinkSample",
     "FixationSample",
+    "EyeClosureEvent",
+    "EyeClosureType",
 ]

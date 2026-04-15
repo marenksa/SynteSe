@@ -17,7 +17,7 @@ from pupil_tracker.output import MultiSink, PureDataSink
 from pupil_tracker.recording import Recording
 
 if TYPE_CHECKING:
-    from pupil_tracker.recording import GazeSample
+    from pupil_tracker.recording import EyeClosureEvent, GazeSample
 
 
 # BGR colors for each note (matching the hue ranges)
@@ -94,6 +94,15 @@ class GazeVideoPlayer:
 
         # Content-based note triggering
         self._note_gate = NoteGate()
+
+        # Blink display state (old detector)
+        self._blink_flash_until = 0.0  # Timestamp until which to show blink flash
+        self._last_blink_duration_ms = 0.0
+
+        # Eye closure display state (new detector)
+        self._closure_flash_until = 0.0
+        self._last_closure: "EyeClosureEvent | None" = None
+
 
     def _build_gamma_lut(self, gamma: float) -> np.ndarray:
         """Build a lookup table for gamma correction.
@@ -211,6 +220,97 @@ class GazeVideoPlayer:
 
         return frame
 
+    def draw_eye_camera(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
+        """Draw eye camera feed and blink indicator in the top-right corner."""
+        eye_frame = self.recording.get_eye_frame_for_world_frame(frame_index)
+        if eye_frame is None:
+            return frame
+
+        height, width = frame.shape[:2]
+
+        # Scale eye frame to a reasonable size (eye is 192x192, show at ~150px)
+        eye_h, eye_w = eye_frame.shape[:2]
+        scale = 150 / max(eye_h, eye_w)
+        display_size = (int(eye_w * scale), int(eye_h * scale))
+        eye_resized = cv2.resize(eye_frame, display_size)
+        eye_resized = cv2.flip(eye_resized, 0)  # Pupil eye camera is upside down
+
+        # Convert grayscale eye frame to BGR if needed
+        if len(eye_resized.shape) == 2:
+            eye_resized = cv2.cvtColor(eye_resized, cv2.COLOR_GRAY2BGR)
+
+        eh, ew = eye_resized.shape[:2]
+        margin = 10
+        x_offset = width - ew - margin
+        y_offset = margin
+
+        # Check for active blink (old detector)
+        world_ts = self.recording.get_frame_timestamp(frame_index)
+        blink = self.recording.get_blink_at_timestamp(world_ts)
+
+        if blink is not None:
+            self._blink_flash_until = world_ts + 0.2
+            self._last_blink_duration_ms = blink.duration_ms
+
+        is_blinking = world_ts < self._blink_flash_until
+
+        # Check for eye closure (new detector)
+        closure = self.recording.get_eye_closure_at_timestamp(world_ts)
+        if closure is not None:
+            self._closure_flash_until = world_ts + 0.2
+            self._last_closure = closure
+
+        is_closure = world_ts < self._closure_flash_until
+
+        # Draw border — red for old blink, cyan for new closure, both = magenta
+        if is_blinking and is_closure:
+            border_color = (255, 0, 255)  # Magenta — both detectors agree
+        elif is_blinking:
+            border_color = (0, 0, 255)  # Red — old only
+        elif is_closure:
+            border_color = (255, 255, 0)  # Cyan — new only
+        else:
+            border_color = (200, 200, 200)
+
+        border_width = 3 if (is_blinking or is_closure) else 1
+        cv2.rectangle(
+            frame,
+            (x_offset - border_width, y_offset - border_width),
+            (x_offset + ew + border_width, y_offset + eh + border_width),
+            border_color,
+            border_width,
+        )
+
+        # Place eye frame
+        frame[y_offset:y_offset + eh, x_offset:x_offset + ew] = eye_resized
+
+        # Draw blink/closure text below eye frame
+        text_y = y_offset + eh + 20
+        if is_blinking:
+            if self._last_blink_duration_ms >= 0:
+                duration_text = f"OLD: BLINK {self._last_blink_duration_ms:.0f}ms"
+            else:
+                duration_text = "OLD: BLINK"
+            cv2.putText(frame, duration_text, (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        else:
+            old_count = len(self.recording.blink_data)
+            cv2.putText(frame, f"Old: {old_count}", (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+        text_y += 22
+        if is_closure and self._last_closure is not None:
+            c = self._last_closure
+            label = f"NEW: {c.duration_ms:.0f}ms [{c.closure_type.value}]"
+            cv2.putText(frame, label, (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+        else:
+            new_count = len(self.recording.eye_closure_data)
+            cv2.putText(frame, f"New: {new_count}", (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+        return frame
+
     def draw_info(self, frame: np.ndarray) -> np.ndarray:
         """Draw playback info on frame."""
         height, width = frame.shape[:2]
@@ -302,6 +402,11 @@ class GazeVideoPlayer:
         print(f"Duration: {self.recording.duration_s:.1f}s, {total_frames} frames @ {self.recording.fps:.1f} FPS")
         print(f"Gaze samples: {len(self.recording.gaze_data)}")
         print(f"Fixations: {len(self.recording.fixation_data)}")
+        print(f"Blinks (old): {len(self.recording.blink_data)}")
+        print(f"Eye closures (new): {len(self.recording.eye_closure_data)}")
+
+        if self.recording.eye_video is not None:
+            print(f"Eye camera: available")
         print("\nPress 'H' for keyboard controls, 'Q' to quit\n")
 
         # Initial seek
@@ -315,6 +420,9 @@ class GazeVideoPlayer:
                 self.recording.seek(self.frame_index)
                 need_seek = False
                 next_frame_time = time.perf_counter()  # Reset timing after seek
+                # Reset flash timers so stale indicators don't persist after seek/loop
+                self._blink_flash_until = 0.0
+                self._closure_flash_until = 0.0
 
             result = self.recording.read_next_frame()
             if result is None:
@@ -364,6 +472,7 @@ class GazeVideoPlayer:
             if self.show_overlay:
                 display_frame = self.draw_color_info(display_frame)
             display_frame = self.draw_gaze(display_frame, self.frame_index)
+            display_frame = self.draw_eye_camera(display_frame, self.frame_index)
             display_frame = self.draw_info(display_frame)
 
             if show_help:
@@ -518,6 +627,7 @@ def main() -> None:
             print(f"  Frames: {info.frame_count}")
             print(f"  Gaze samples: {info.gaze_count}")
             print(f"  Fixations: {info.fixation_count}")
+            print(f"  Blinks: {info.blink_count}")
 
             if args.gamma != 1.0:
                 print(f"  Gamma correction: {args.gamma}")
