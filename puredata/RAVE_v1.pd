@@ -1,9 +1,9 @@
-#N canvas 34 66 897 687 12;
+#N canvas 34 66 915 624 12;
 #X text 70 26 ========== RAVE_v1 ==========;
 #X text 70 50 Maps eye/colour/velocity signals to RAVE latent dims via nn~., f 70;
 #X text 70 70 z0=gaze X z1=gaze Y z2=hue z3=brightness z4=velocity (range -3..+3), f 70;
 #X text 70 90 blink / flutter / intentional: 0|1 events;
-#X obj 140 180 netreceive 9001;
+#X obj 140 132 netreceive 9001;
 #X obj 227 483 output~;
 #X floatatom 104 284 5 -3 3 0 - - - 0;
 #X floatatom 172 284 5 -3 3 0 - - - 0;
@@ -52,7 +52,6 @@
 #X connect 27 0 15 0;
 #X connect 28 0 24 0;
 #X connect 28 1 19 0;
-#X connect 28 4 16 0;
 #X connect 28 8 27 0;
 #X connect 29 0 30 0;
 #X connect 30 0 11 8;

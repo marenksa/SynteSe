@@ -207,17 +207,15 @@ Patches are named `{Control}{Target}{Source}_v{N}`, where each token describes w
 | **Control** | Toggle | `Tg` |
 | **Control** | Stream | `S` |
 | **Target** | Note | `N` |
-| **Target** | Chord | `C` |
-| **Target** | Pad | `P` |
 | **Target** | Sample | `S` |
 | **Target** | Sequence | `Sq` |
 | **Target** | Effect | `E` |
 | **Source** | Color | `C` |
 | **Source** | Confidence | `Cf` |
+| **Source** | Coordinates | `X` |
 | **Source** | Blink | `B` |
 | **Source** | Flutter | `F` |
 | **Source** | Brightness | `Br` |
-| **Source** | Object | `O` |
 
 
 ## Troubleshooting
