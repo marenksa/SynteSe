@@ -27,9 +27,10 @@ def load_patch(name: str) -> Patch:
     """Load a patch by name.
 
     Available patches:
-        TNC_v1     —  hue→note, brightness→octave, flutter→effect
-        TgSqC_v1   —  hue→color ID (1–7), stability→PD toggle
-        SCfBF_v1   —  eye confidence stream → PD confidence signal
+        TNC_v1        —  hue→note, brightness→octave, flutter→effect
+        TgSqC_v1      —  hue→color ID (1–7), stability→PD toggle
+        SCfBF_v1      —  eye confidence stream → PD confidence signal
+        RAVE_v1       —  gaze/colour/velocity → RAVE latent dims z0–z4 for nn~
     """
     if name == "TNC_v1":
         from eye_synth.patches.TNC_v1 import ColorMusicPatch
@@ -40,6 +41,9 @@ def load_patch(name: str) -> Patch:
     if name == "SCfBF_v1":
         from eye_synth.patches.SCfBF_v1 import ConfidenceStreamPatch
         return ConfidenceStreamPatch()
+    if name == "RAVE_v1":
+        from eye_synth.patches.RAVE_v1 import RAVEPatch
+        return RAVEPatch()
     raise ValueError(
-        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1, SCfBF_v1"
+        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1, SCfBF_v1, RAVE_v1"
     )
