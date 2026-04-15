@@ -22,8 +22,8 @@ from enum import Enum
 BLINK_MAX_MS = 400        # Blinks shorter than this are normal blinks
 INTENTIONAL_MIN_MS = 500  # Blinks longer than this are intentional closures
 FLUTTER_WINDOW_S = 1.5    # Sliding window for flutter detection
-FLUTTER_MIN_BLINKS = 4    # Minimum blinks in window to qualify as flutter
-FLUTTER_END_TIMEOUT_S = 0.5  # Flutter ends when no new blink arrives within this time
+FLUTTER_MIN_BLINKS = 3    # Minimum blinks in window to qualify as flutter
+FLUTTER_END_TIMEOUT_S = 0.3  # Flutter ends when no new blink arrives within this time
 
 
 # --- Types ---
@@ -124,21 +124,10 @@ class StreamingBlinkTracker:
         blink: BlinkSample | None = None
 
         if blink_type == "onset":
-            if self._pending_onset_ts is not None:
-                blink = BlinkSample(
-                    timestamp=self._pending_onset_ts,
-                    duration_ms=-1,
-                    confidence=self._pending_onset_conf,
-                    blink_type=BlinkType.BLINK,
-                )
-                self._blink_count += 1
-                self._blink_times.append(self._pending_onset_ts)
-                self._last_blink_mono = time.monotonic()
-                if self._flutter_start is not None:
-                    self._flutter_blink_count += 1
-
-            self._pending_onset_ts = timestamp
-            self._pending_onset_conf = confidence
+            if self._pending_onset_ts is None:
+                self._pending_onset_ts = timestamp
+                self._pending_onset_conf = confidence
+            # else: consecutive onset (other eye or retransmit) — keep the first
 
         elif blink_type == "offset":
             if self._pending_onset_ts is not None:

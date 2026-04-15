@@ -1,4 +1,4 @@
-#N canvas 0 32 1470 868 12;
+#N canvas 34 66 802 625 12;
 #X text 70 26 ========== CONFIDENCE STREAM ==========;
 #X text 70 50 Streams raw confidence and eye-state booleans from Python every frame., f 75;
 #X text 70 70 confidence: 0-1 (tracker certainty);
