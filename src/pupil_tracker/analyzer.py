@@ -65,9 +65,9 @@ class ColorReading:
 
 @dataclass(frozen=True)
 class NoteEvent:
-    """A discrete note trigger event from velocity-gated gaze settling.
+    """A discrete note trigger event from content-based gaze settling.
 
-    Created when the gaze velocity drops below threshold (settling),
+    Created when the detected MIDI note stabilizes after a real transition,
     using color analysis to determine the note at the gaze position.
     """
 
@@ -80,88 +80,57 @@ class NoteEvent:
     center_y: int
 
 
-@dataclass
-class TriggerState:
-    """State of the last triggered note for spatial+note deduplication."""
+class NoteGate:
+    """Triggers notes when the detected MIDI note stabilizes after a real transition.
 
-    midi_note: int
-    position: tuple[int, int]  # pixel coords of last trigger
+    Tracks the midi_note stream instead of gaze velocity. This works correctly
+    with head-mounted eye trackers where gaze pixel position doesn't represent
+    world position (the scene moves, not the gaze).
 
+    Fires when:
+    - A new note appears and is stable for `stable_frames` consecutive frames
+    - The same note reappears after `min_transition_frames` of different content
+      (e.g., head turn away and back to the same color)
 
-class NoteTracker:
-    """Decides whether a fixation should trigger a new note.
-
-    Fires when either the note changed or the gaze moved beyond a
-    distance threshold from the last trigger point.
+    Does NOT fire when:
+    - Gaze rests on the same content (deduplication)
+    - Brief 1-2 frame jitter from text/details on book covers
     """
 
-    def __init__(self, distance_threshold: float = 0.08):
-        # threshold is fraction of frame diagonal
-        self.distance_threshold = distance_threshold
-        self.last_trigger: TriggerState | None = None
+    def __init__(self, stable_frames: int = 4, min_transition_frames: int = 3):
+        self.stable_frames = stable_frames
+        self.min_transition_frames = min_transition_frames
+        self._recent: deque[int] = deque(maxlen=stable_frames)
+        self._last_triggered: int | None = None
+        self._diff_streak: int = 0
+        self._transition_detected: bool = False
 
-    def should_trigger(
-        self,
-        midi_note: int,
-        x: int,
-        y: int,
-        frame_width: int,
-        frame_height: int,
-    ) -> bool:
-        if self.last_trigger is None:
-            return True
+    def update(self, midi_note: int) -> bool:
+        """Feed a new midi_note. Returns True if note just stabilized (trigger)."""
+        self._recent.append(midi_note)
 
-        note_changed = midi_note != self.last_trigger.midi_note
+        # Track consecutive frames different from last triggered note
+        if self._last_triggered is not None and midi_note != self._last_triggered:
+            self._diff_streak += 1
+            if self._diff_streak >= self.min_transition_frames:
+                self._transition_detected = True
+        else:
+            self._diff_streak = 0
 
-        diagonal = (frame_width**2 + frame_height**2) ** 0.5
-        dx = x - self.last_trigger.position[0]
-        dy = y - self.last_trigger.position[1]
-        dist = (dx**2 + dy**2) ** 0.5
-        position_changed = dist > self.distance_threshold * diagonal
-
-        return note_changed or position_changed
-
-    def record_trigger(self, midi_note: int, x: int, y: int) -> None:
-        self.last_trigger = TriggerState(midi_note=midi_note, position=(x, y))
-
-
-class VelocityGate:
-    """Detects when gaze settles by tracking velocity.
-
-    Returns True once when gaze speed drops below threshold for enough
-    consecutive frames (transition from moving to still). Resets when
-    gaze moves fast again, allowing re-trigger on return.
-    """
-
-    def __init__(self, velocity_threshold: float = 0.03, min_settle_frames: int = 3):
-        self.velocity_threshold = velocity_threshold
-        self.min_settle_frames = min_settle_frames
-        self._last_pos: tuple[int, int] | None = None
-        self._slow_count: int = 0
-        self._settled: bool = False
-
-    def update(self, x: int, y: int, frame_width: int, frame_height: int) -> bool:
-        """Feed a new gaze position. Returns True if gaze just settled."""
-        if self._last_pos is None:
-            self._last_pos = (x, y)
-            self._slow_count = 1
+        # Need full window before checking stability
+        if len(self._recent) < self.stable_frames:
             return False
 
-        diagonal = (frame_width**2 + frame_height**2) ** 0.5
-        dx = x - self._last_pos[0]
-        dy = y - self._last_pos[1]
-        speed = (dx**2 + dy**2) ** 0.5 / diagonal
+        # Not stable yet
+        if len(set(self._recent)) != 1:
+            return False
 
-        self._last_pos = (x, y)
-
-        if speed < self.velocity_threshold:
-            self._slow_count += 1
-        else:
-            self._slow_count = 0
-            self._settled = False
-
-        if self._slow_count >= self.min_settle_frames and not self._settled:
-            self._settled = True
+        # Stable — trigger if new note or went through a real transition
+        current = self._recent[0]
+        if current != self._last_triggered or self._transition_detected:
+            self._last_triggered = current
+            self._transition_detected = False
+            self._diff_streak = 0
             return True
 
         return False

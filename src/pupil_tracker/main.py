@@ -6,7 +6,7 @@ import sys
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteTracker, VelocityGate
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteGate
 from pupil_tracker.client import PupilCaptureClient
 from pupil_tracker.output import (
     ColorConsoleSink,
@@ -196,9 +196,8 @@ def run_tracker(
     if pd:
         pd_sink = PureDataSink(host=pd_host, port=pd_port)
 
-    # Velocity-gated gaze triggering
-    velocity_gate = VelocityGate()
-    note_tracker = NoteTracker()
+    # Content-based note triggering
+    note_gate = NoteGate()
 
     print("=" * 60)
     print("Pupil Color-to-Music Tracker")
@@ -207,7 +206,7 @@ def run_tracker(
     print(f"  Region size: {region_size}px")
     print(f"  Smoothing window: {smoothing} frames")
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
-    print("  Mode: COLOR → MUSIC (velocity-gated gaze triggering)")
+    print("  Mode: COLOR → MUSIC (content-based note triggering)")
     if pd:
         print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
     print("=" * 60)
@@ -234,18 +233,10 @@ def run_tracker(
                         output.emit(color_reading)
                         last_reading = color_reading
 
-                        # Velocity-gated note triggering
+                        # Content-based note triggering
                         if (
                             pd_sink is not None
-                            and velocity_gate.update(
-                                color_reading.center_x, color_reading.center_y,
-                                gaze_region.frame_width, gaze_region.frame_height,
-                            )
-                            and note_tracker.should_trigger(
-                                color_reading.midi_note,
-                                color_reading.center_x, color_reading.center_y,
-                                gaze_region.frame_width, gaze_region.frame_height,
-                            )
+                            and note_gate.update(color_reading.midi_note)
                         ):
                             note_event = NoteEvent(
                                 timestamp=color_reading.timestamp,
@@ -257,10 +248,6 @@ def run_tracker(
                                 center_y=color_reading.center_y,
                             )
                             pd_sink.emit(note_event)
-                            note_tracker.record_trigger(
-                                color_reading.midi_note,
-                                color_reading.center_x, color_reading.center_y,
-                            )
 
                     # Display video with overlay
                     if show_video:

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteTracker, VelocityGate
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent, NoteGate
 from pupil_tracker.output import MultiSink, PureDataSink
 from pupil_tracker.recording import Recording
 
@@ -92,9 +92,8 @@ class GazeVideoPlayer:
         # Window name
         self.window_name = f"Gaze Player - {recording.recording_name}"
 
-        # Velocity-gated gaze triggering
-        self._velocity_gate = VelocityGate()
-        self._note_tracker = NoteTracker()
+        # Content-based note triggering
+        self._note_gate = NoteGate()
 
     def _build_gamma_lut(self, gamma: float) -> np.ndarray:
         """Build a lookup table for gamma correction.
@@ -344,19 +343,10 @@ class GazeVideoPlayer:
                         if self.output is not None:
                             self.output.emit(color_reading)
 
-                        # Velocity-gated note triggering
-                        height, width = current_frame.shape[:2]
+                        # Content-based note triggering
                         if (
                             self.pd_sink is not None
-                            and self._velocity_gate.update(
-                                color_reading.center_x, color_reading.center_y,
-                                width, height,
-                            )
-                            and self._note_tracker.should_trigger(
-                                color_reading.midi_note,
-                                color_reading.center_x, color_reading.center_y,
-                                width, height,
-                            )
+                            and self._note_gate.update(color_reading.midi_note)
                         ):
                             note_event = NoteEvent(
                                 timestamp=color_reading.timestamp,
@@ -368,10 +358,6 @@ class GazeVideoPlayer:
                                 center_y=color_reading.center_y,
                             )
                             self.pd_sink.emit(note_event)
-                            self._note_tracker.record_trigger(
-                                color_reading.midi_note,
-                                color_reading.center_x, color_reading.center_y,
-                            )
 
             # Draw overlays
             display_frame = current_frame.copy()
@@ -519,7 +505,7 @@ def main() -> None:
     if args.pd:
         pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
         print(f"Pure Data output enabled: {args.pd_host}:{args.pd_port}")
-        print("  Using velocity-gated gaze triggering")
+        print("  Using content-based note triggering")
 
     # Load and play
     try:
