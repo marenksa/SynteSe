@@ -112,6 +112,7 @@ class PupilCaptureClient:
         self._remote = self._context.socket(zmq.REQ)
         self._remote.setsockopt(zmq.RCVTIMEO, self._timeout_ms)
         self._remote.setsockopt(zmq.SNDTIMEO, self._timeout_ms)
+        self._remote.setsockopt(zmq.LINGER, 0)
         self._remote.connect(f"tcp://{self._host}:{self._port}")
 
         # Request the subscription port

@@ -37,14 +37,6 @@ A note triggers when the gaze settles on new content. This is handled by `NoteGa
 
 **Note triggering is suppressed during active flutter** — use flutter as a distinct performance gesture.
 
-### Confidence gating
-
-During blinks and flutter, the raw gaze confidence (0–1) is forwarded to Pure Data. When the event ends, a single `confidence 1.0` reset message is sent.
-
-**Pd message:** `confidence <value>`
-
-This can be used to fade, mute, or modulate the sound while the gaze signal is unreliable.
-
 ## Pure Data Patch
 
 `puredata/TNC_v1.pd` — receives all messages above and synthesises sound using ADSR envelopes.
@@ -52,7 +44,6 @@ This can be used to fade, mute, or modulate the sound while the gaze signal is u
 ```
 note_on <midi> <brightness>   →  triggers a note
 effect <0–1>                  →  sets effect intensity (0 = off)
-confidence <0–1>              →  modulation/gate signal during noise
 ```
 
 To use:

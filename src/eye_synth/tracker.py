@@ -1,4 +1,4 @@
-"""Live tracker entry point for the Pupil Color-to-Music Tracker."""
+"""Live tracker entry point."""
 
 import argparse
 import sys
@@ -29,7 +29,7 @@ def run_tracker(
     patch_name: str = "TNC_v1",
     show_overlay: bool = True,
 ) -> None:
-    """Run the color-to-music tracker."""
+    """Run the live tracker."""
     pipeline = Pipeline()
     gamma_lut = build_gamma_lut(gamma)
 
@@ -48,7 +48,7 @@ def run_tracker(
     latest_eye_frame: np.ndarray | None = None
 
     print("=" * 60)
-    print("Pupil Color-to-Music Tracker")
+    print("Pupil Tracker")
     print("=" * 60)
     print(f"  Host: {host}:{port}")
     print(f"  Patch: {patch_name}")
@@ -126,7 +126,7 @@ def run_tracker(
                         flutter_count=pipeline.blink_tracker.flutter_count,
                     )
 
-                    cv2.imshow("Pupil Color-to-Music", display)
+                    cv2.imshow("Pupil Tracker", display)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
 
