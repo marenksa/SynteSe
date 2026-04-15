@@ -17,8 +17,9 @@ BLINK_MAX_MS = 400
 INTENTIONAL_MIN_MS = 500
 
 # Flutter detection from rapid blink bursts
-FLUTTER_WINDOW_S = 1.5  # Sliding window size
+FLUTTER_WINDOW_S = 1.0  # Sliding window size
 FLUTTER_MIN_BLINKS = 4  # Min blink onsets in window to qualify as flutter
+FLUTTER_END_TIMEOUT_S = 0.5  # End flutter when no new blink arrives within this time
 
 
 class BlinkType(Enum):

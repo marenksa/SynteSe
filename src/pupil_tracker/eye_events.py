@@ -6,10 +6,12 @@ classifies by duration, and detects flutter from rapid blink bursts.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 
 from pupil_tracker.recording import (
     BLINK_MAX_MS,
+    FLUTTER_END_TIMEOUT_S,
     FLUTTER_MIN_BLINKS,
     FLUTTER_WINDOW_S,
     INTENTIONAL_MIN_MS,
@@ -39,8 +41,10 @@ class StreamingBlinkTracker:
         # Sliding window of blink timestamps for flutter detection
         self._blink_times: deque[float] = deque()
         self._flutter_start: float | None = None
+        self._flutter_start_mono: float = 0.0  # monotonic time of flutter onset
         self._flutter_count = 0
         self._flutter_blink_count = 0  # Blinks accumulated during current flutter
+        self._last_blink_mono: float = 0.0  # monotonic time of most recent blink
 
     @property
     def blink_count(self) -> int:
@@ -53,6 +57,10 @@ class StreamingBlinkTracker:
     @property
     def is_flutter_active(self) -> bool:
         return self._flutter_start is not None
+
+    @property
+    def active_flutter_blink_count(self) -> int:
+        return self._flutter_blink_count
 
     @property
     def is_eyes_closed(self) -> bool:
@@ -75,7 +83,6 @@ class StreamingBlinkTracker:
             - flutter_event is set when a flutter burst ends.
         """
         blink: BlinkSample | None = None
-        flutter: FlutterEvent | None = None
 
         if blink_type == "onset":
             # If we had a pending onset without offset, emit it as unpaired
@@ -88,6 +95,7 @@ class StreamingBlinkTracker:
                 )
                 self._blink_count += 1
                 self._blink_times.append(self._pending_onset_ts)
+                self._last_blink_mono = time.monotonic()
                 if self._flutter_start is not None:
                     self._flutter_blink_count += 1
 
@@ -107,17 +115,38 @@ class StreamingBlinkTracker:
                 )
                 self._blink_count += 1
                 self._blink_times.append(self._pending_onset_ts)
+                self._last_blink_mono = time.monotonic()
                 if self._flutter_start is not None:
                     self._flutter_blink_count += 1
                 self._pending_onset_ts = None
 
-        # Check for flutter (sliding window)
-        flutter = self._check_flutter(timestamp)
+        # Check for flutter onset (sliding window)
+        self._check_flutter(timestamp)
 
-        return blink, flutter
+        return blink, None
 
-    def _check_flutter(self, now: float) -> FlutterEvent | None:
-        """Check if recent blinks qualify as flutter."""
+    def tick(self, now_mono: float) -> FlutterEvent | None:
+        """Check for flutter end by timeout. Call every loop iteration.
+
+        Flutter ends when no new blink arrives within FLUTTER_END_TIMEOUT_S.
+        Returns a FlutterEvent when flutter ends, None otherwise.
+        """
+        if self._flutter_start is not None:
+            if now_mono - self._last_blink_mono > FLUTTER_END_TIMEOUT_S:
+                event = FlutterEvent(
+                    timestamp=self._flutter_start,
+                    duration_s=self._last_blink_mono - self._flutter_start_mono,
+                    blink_count=self._flutter_blink_count,
+                )
+                self._flutter_start = None
+                self._flutter_start_mono = 0.0
+                self._flutter_blink_count = 0
+                self._flutter_count += 1
+                return event
+        return None
+
+    def _check_flutter(self, now: float) -> None:
+        """Detect flutter onset from recent blinks (sliding window)."""
         # Expire old blinks outside the window
         window_start = now - FLUTTER_WINDOW_S
         while self._blink_times and self._blink_times[0] < window_start:
@@ -125,23 +154,8 @@ class StreamingBlinkTracker:
 
         count = len(self._blink_times)
 
-        if count >= FLUTTER_MIN_BLINKS:
-            if self._flutter_start is None:
-                # Flutter becomes detectable now (at the Nth blink), not retroactively
-                self._flutter_start = now
-                self._flutter_blink_count = count
-            return None  # Still in flutter
-        else:
-            if self._flutter_start is not None:
-                # Flutter just ended
-                event = FlutterEvent(
-                    timestamp=self._flutter_start,
-                    duration_s=now - self._flutter_start,
-                    blink_count=self._flutter_blink_count,
-                )
-                self._flutter_start = None
-                self._flutter_blink_count = 0
-                self._flutter_count += 1
-                return event
-
-        return None
+        if count >= FLUTTER_MIN_BLINKS and self._flutter_start is None:
+            # Flutter onset: becomes active immediately at the Nth blink
+            self._flutter_start = now
+            self._flutter_start_mono = time.monotonic()
+            self._flutter_blink_count = count

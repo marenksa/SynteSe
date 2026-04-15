@@ -499,9 +499,7 @@ class ColorAnalyzer:
         # Calculate MIDI notes (stable for output, raw for transition detection)
         midi_note = self._calculate_midi_note(stable_note, stable_octave)
         raw_note_val = self._hue_to_note(raw_hue) if raw_hue is not None else stable_note
-        raw_midi_note = self._calculate_midi_note(
-            raw_note_val, self._brightness_to_octave(raw_value)
-        )
+        raw_midi_note = self._calculate_midi_note(raw_note_val, stable_octave)
 
         return ColorReading(
             timestamp=gaze_region.timestamp,

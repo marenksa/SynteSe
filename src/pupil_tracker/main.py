@@ -134,7 +134,7 @@ def run_tracker(
                 # Feed blink events to tracker
                 if message.blink is not None:
                     b = message.blink
-                    blink_event, flutter_event = blink_tracker.update(
+                    blink_event, _ = blink_tracker.update(
                         b.blink_type, b.timestamp, b.confidence
                     )
                     if blink_event is not None:
@@ -153,14 +153,22 @@ def run_tracker(
                         ):
                             pd_sink.emit_am_lfo(0)
 
-                    if flutter_event is not None:
-                        flutter_flash_until = now + 0.3
+                    # Update overlay label immediately when flutter becomes active
+                    if blink_tracker.is_flutter_active:
                         last_flutter_label = (
-                            f"FLUTTER {flutter_event.blink_count} blinks"
+                            f"FLUTTER {blink_tracker.active_flutter_blink_count} blinks"
                         )
 
-                        if pd_sink is not None:
-                            pd_sink.emit_am_lfo(flutter_to_lfo(flutter_event.blink_count, FLUTTER_MIN_BLINKS))
+                # Check for flutter end (timeout-based, runs every iteration)
+                flutter_event = blink_tracker.tick(now)
+                if flutter_event is not None:
+                    flutter_flash_until = now + 0.3
+                    last_flutter_label = (
+                        f"FLUTTER {flutter_event.blink_count} blinks"
+                    )
+
+                    if pd_sink is not None:
+                        pd_sink.emit_am_lfo(flutter_to_lfo(flutter_event.blink_count, FLUTTER_MIN_BLINKS))
 
                 # Store latest eye frame for display
                 if message.eye_frame is not None:
