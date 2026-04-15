@@ -1,7 +1,7 @@
-"""color_music patch: hue → MIDI note, brightness → octave, flutter → AM-LFO."""
+"""TNC_v1 patch: hue → MIDI note, brightness → octave, flutter → AM-LFO."""
 
-from eye_synth.patches.color_music.gate import NoteGate
-from eye_synth.patches.color_music.mapping import (
+from eye_synth.patches.TNC_v1.gate import NoteGate
+from eye_synth.patches.TNC_v1.mapping import (
     HUE_RANGES,
     NOTE_BGR_COLORS,
     NOTE_COLOR_NAMES,
@@ -10,7 +10,7 @@ from eye_synth.patches.color_music.mapping import (
     NoteMapper,
     NoteReading,
 )
-from eye_synth.patches.color_music.patch import ColorMusicPatch, flutter_to_lfo
+from eye_synth.patches.TNC_v1.patch import ColorMusicPatch, flutter_to_lfo
 
 __all__ = [
     "ColorMusicPatch",

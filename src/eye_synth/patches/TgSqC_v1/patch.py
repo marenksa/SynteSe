@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from eye_synth.patches.color_toggle.mapping import ColorIdMapper
+from eye_synth.patches.TgSqC_v1.mapping import ColorIdMapper
 from eye_synth.signals.bus import OutputBus, SignalBus
 
 

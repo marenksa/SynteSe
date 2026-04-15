@@ -1,4 +1,4 @@
-"""Hue-to-color-ID mapping for the color_toggle patch.
+"""Hue-to-color-ID mapping for the TgSqC_v1 patch.
 
 Maps OpenCV hue (0–179) to a stable color ID in 1–7.
 No octave or brightness dimension.

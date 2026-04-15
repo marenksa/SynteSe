@@ -1,4 +1,4 @@
-"""Colour-to-note mapping for the color_music patch.
+"""Colour-to-note mapping for the TNC_v1 patch.
 
 Defines the Note enum, hue/brightness → note/octave/MIDI mapping,
 and stability-windowed NoteMapper.

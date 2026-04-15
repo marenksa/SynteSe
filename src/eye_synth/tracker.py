@@ -26,7 +26,7 @@ def run_tracker(
     pd_host: str = "127.0.0.1",
     pd_port: int = 9001,
     gamma: float = 1.0,
-    patch_name: str = "color_music",
+    patch_name: str = "TNC_v1",
     show_overlay: bool = True,
 ) -> None:
     """Run the color-to-music tracker."""
@@ -158,7 +158,7 @@ def main() -> None:
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--gamma", type=float, default=1.0,
                         help="Gamma correction (< 1.0 brightens, > 1.0 darkens)")
-    parser.add_argument("--patch", type=str, default="color_music",
+    parser.add_argument("--patch", type=str, default="TNC_v1",
                         help="Patch to use for mapping signals to outputs")
 
     parser.add_argument("--pd-host", type=str, default="127.0.0.1",

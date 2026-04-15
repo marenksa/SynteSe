@@ -58,7 +58,7 @@ class GazeVideoPlayer:
         self.window_name = f"Gaze Player - {recording.recording_name}"
 
         self._outputs = outputs if outputs is not None else OutputBus()
-        self._patch = patch if patch is not None else load_patch("color_music")
+        self._patch = patch if patch is not None else load_patch("TNC_v1")
 
         # Blink/flutter display state
         self._blink_flash_until = 0.0
@@ -335,7 +335,7 @@ def main() -> None:
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--no-overlay", action="store_true",
                         help="Disable colour/brightness overlay")
-    parser.add_argument("--patch", type=str, default="color_music",
+    parser.add_argument("--patch", type=str, default="TNC_v1",
                         help="Patch to use for mapping signals to outputs")
     parser.add_argument("--pd-host", type=str, default="127.0.0.1",
                         help="Pure Data host (default: 127.0.0.1)")

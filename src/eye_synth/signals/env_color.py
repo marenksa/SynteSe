@@ -7,7 +7,7 @@ Two classes work in sequence:
                       with Gaussian-weighted spatial averaging and temporal
                       smoothing
 
-Note/octave mapping is prototype-specific and lives in patches/color_music/.
+Note/octave mapping is prototype-specific and lives in patches/TNC_v1/.
 """
 
 from __future__ import annotations

@@ -27,15 +27,15 @@ def load_patch(name: str) -> Patch:
     """Load a patch by name.
 
     Available patches:
-        color_music    —  hue→note, brightness→octave, flutter→AM-LFO
-        color_toggle   —  hue→color ID (1–7), stability→PD toggle
+        TNC_v1     —  hue→note, brightness→octave, flutter→AM-LFO
+        TgSqC_v1   —  hue→color ID (1–7), stability→PD toggle
     """
-    if name == "color_music":
-        from eye_synth.patches.color_music import ColorMusicPatch
+    if name == "TNC_v1":
+        from eye_synth.patches.TNC_v1 import ColorMusicPatch
         return ColorMusicPatch()
-    if name == "color_toggle":
-        from eye_synth.patches.color_toggle import ColorTogglePatch
+    if name == "TgSqC_v1":
+        from eye_synth.patches.TgSqC_v1 import ColorTogglePatch
         return ColorTogglePatch()
     raise ValueError(
-        f"Unknown patch: {name!r}. Available patches: color_music, color_toggle"
+        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1"
     )

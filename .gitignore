@@ -46,3 +46,5 @@ brightness_*.csv
 brightness_*.jsonl
 recordings/
 ai-transcripts/
+articles/
+

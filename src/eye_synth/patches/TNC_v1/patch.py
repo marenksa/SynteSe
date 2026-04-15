@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from eye_synth.patches.color_music.gate import NoteGate
-from eye_synth.patches.color_music.mapping import NoteMapper
+from eye_synth.patches.TNC_v1.gate import NoteGate
+from eye_synth.patches.TNC_v1.mapping import NoteMapper
 from eye_synth.signals.bus import OutputBus, SignalBus
 from eye_synth.signals.eye_blinks import FLUTTER_MIN_BLINKS, BlinkType
 

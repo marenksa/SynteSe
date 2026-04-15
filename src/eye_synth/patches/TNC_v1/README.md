@@ -1,4 +1,4 @@
-# Patch: color_music
+# Patch: TNC_v1
 
 Maps visible light wavelength to musical pitch and gaze dynamics to sound modulation. The core idea: what you look at determines what note plays; how you blink determines how it sounds.
 
@@ -47,7 +47,7 @@ This can be used to fade, mute, or modulate the sound while the gaze signal is u
 
 ## Pure Data Patch
 
-`puredata/color_music.pd` — receives all messages above and synthesises sound using ADSR envelopes.
+`puredata/TNC_v1.pd` — receives all messages above and synthesises sound using ADSR envelopes.
 
 ```
 note_on <midi> <brightness>   →  triggers a note
@@ -56,7 +56,7 @@ confidence <0–1>              →  modulation/gate signal during noise
 ```
 
 To use:
-1. Open `puredata/color_music.pd` in Pure Data
+1. Open `puredata/TNC_v1.pd` in Pure Data
 2. Enable DSP (Media → DSP On)
 3. Run the tracker with `--pd`
 
@@ -70,7 +70,7 @@ uv run pupil-tracker --pd
 uv run gaze-player recordings/000 --pd
 
 # This patch is the default, but can be explicit:
-uv run pupil-tracker --patch color_music --pd
+uv run pupil-tracker --patch TNC_v1 --pd
 ```
 
 ## Stability Tuning

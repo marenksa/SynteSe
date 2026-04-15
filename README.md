@@ -31,7 +31,7 @@ uv run pupil-player recordings/000
 
 Player controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump), H (help), Q (quit).
 
-The default patch is `color_music`. See [`patches/color_music/README.md`](src/eye_synth/patches/color_music/README.md) for its specific mappings.
+The default patch is `TNC_v1`. See [`patches/TNC_v1/README.md`](src/eye_synth/patches/TNC_v1/README.md) for its specific mappings.
 
 ## CLI Reference
 
@@ -40,7 +40,7 @@ The default patch is `color_music`. See [`patches/color_music/README.md`](src/ey
 Both commands share these flags:
 
 ```
---patch NAME             Patch to use (default: color_music)
+--patch NAME             Patch to use (default: TNC_v1)
 --pd-host HOST           Pure Data host (default: 127.0.0.1)
 --pd-port PORT           Pure Data port (default: 9001)
 --gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
@@ -65,7 +65,8 @@ recording_path           Path to Pupil Capture recording directory
 
 ```
 ├── puredata/                       # Pure Data synthesis patches
-│   └── color_music.pd
+│   ├── TNC_v1.pd
+│   └── TgSqC_v1.pd
 ├── recordings/                     # Pupil Capture recordings
 └── src/eye_synth/
     ├── tracker.py                  # Live tracker entry point (pupil-tracker)
@@ -85,11 +86,14 @@ recording_path           Path to Pupil Capture recording directory
     │   └── overlay.py              # Stateless drawing functions
     └── patches/
         ├── base.py                 # Patch protocol + load_patch()
-        └── color_music/            # Prototype: colour→MIDI note
-            ├── mapping.py          # Note, NoteMapper, hue/brightness constants
-            ├── gate.py             # NoteGate
-            ├── patch.py            # ColorMusicPatch
-            └── README.md
+        ├── TNC_v1/                 # Trigger Note by Color: colour→MIDI note
+        │   ├── mapping.py          # Note, NoteMapper, hue/brightness constants
+        │   ├── gate.py             # NoteGate
+        │   ├── patch.py            # ColorMusicPatch
+        │   └── README.md
+        └── TgSqC_v1/              # Toggle Sequence by Color: colour→PD toggle
+            ├── mapping.py          # ColorIdMapper
+            └── patch.py            # ColorTogglePatch
 ```
 
 ## Writing a New Patch
@@ -192,6 +196,27 @@ uv run pupil-player recordings/000 --patch scene_motion
 ```
 
 Each patch should have its own `README.md` documenting its specific mappings.
+
+### Patch naming convention
+
+Patches are named `{Control}{Target}{Source}_v{N}`, where each token describes what the patch does: "trigger note by color" → `TNC_v1`.
+
+| Category | Term | Code |
+|---|---|---|
+| **Control** | Trigger | `T` |
+| **Control** | Toggle | `Tg` |
+| **Control** | Stream | `S` |
+| **Source** | Color | `C` |
+| **Source** | Confidence | `Cf` |
+| **Source** | Blink | `B` |
+| **Source** | Flutter | `F` |
+| **Source** | Brightness | `Br` |
+| **Target** | Note | `N` |
+| **Target** | Chord | `C` |
+| **Target** | Pad | `P` |
+| **Target** | Sample | `S` |
+| **Target** | Sequence | `Sq` |
+| **Target** | Effect | `E` |
 
 ## Troubleshooting
 
