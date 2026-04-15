@@ -24,6 +24,7 @@ INTENTIONAL_MIN_MS = 500  # Blinks longer than this are intentional closures
 FLUTTER_WINDOW_S = 1.5    # Sliding window for flutter detection
 FLUTTER_MIN_BLINKS = 3    # Minimum blinks in window to qualify as flutter
 FLUTTER_END_TIMEOUT_S = 0.3  # Flutter ends when no new blink arrives within this time
+ONSET_DEBOUNCE_S = 0.08      # Consecutive onsets within this window = same blink (binocular duplicate)
 
 
 # --- Types ---
@@ -77,6 +78,7 @@ class StreamingBlinkTracker:
     def __init__(self) -> None:
         self._pending_onset_ts: float | None = None
         self._pending_onset_conf: float = 0.0
+        self._last_onset_mono: float = 0.0
 
         self._blink_count = 0
 
@@ -124,10 +126,20 @@ class StreamingBlinkTracker:
         blink: BlinkSample | None = None
 
         if blink_type == "onset":
-            if self._pending_onset_ts is None:
-                self._pending_onset_ts = timestamp
-                self._pending_onset_conf = confidence
-            # else: consecutive onset (other eye or retransmit) — keep the first
+            now_mono = time.monotonic()
+            if self._pending_onset_ts is not None:
+                # Count the previous onset as a blink only if enough wall time
+                # has passed — within ONSET_DEBOUNCE_S it's the other eye for
+                # the same binocular blink, not a new blink.
+                if now_mono - self._last_onset_mono >= ONSET_DEBOUNCE_S:
+                    self._blink_count += 1
+                    self._blink_times.append(self._pending_onset_ts)
+                    self._last_blink_mono = now_mono
+                    if self._flutter_start is not None:
+                        self._flutter_blink_count += 1
+            self._pending_onset_ts = timestamp
+            self._pending_onset_conf = confidence
+            self._last_onset_mono = now_mono
 
         elif blink_type == "offset":
             if self._pending_onset_ts is not None:

@@ -190,7 +190,7 @@ class PupilCaptureClient:
         For gaze, prefers combined gaze; for single-eye, picks higher confidence.
 
         Returns:
-            Tuple of (gaze, frame, fixation, pupil, eye_frame) parts.
+            Tuple of (gaze, frame, fixation, blink, eye_frame) parts.
         """
         if self._subscriber is None:
             return None, None, None, None, None

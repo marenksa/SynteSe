@@ -109,7 +109,7 @@ def run_tracker(
                                 message.frame.height,
                             )
                             gaze_px = (gx, gy)
-                            confidence = pipeline.processor.last_gaze.confidence
+                            confidence = pipeline.processor.last_raw_confidence
 
                         is_blink = now < blink_flash_until
                         is_flutter = now < flutter_flash_until or pipeline.blink_tracker.is_flutter_active

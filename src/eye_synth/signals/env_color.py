@@ -67,6 +67,7 @@ class FrameProcessor:
         self._region_size = region_size
         self._last_frame: FrameData | None = None
         self._last_gaze: GazeData | None = None
+        self._last_raw_confidence: float = 0.0
 
     @property
     def region_size(self) -> int:
@@ -80,15 +81,18 @@ class FrameProcessor:
     def last_gaze(self) -> GazeData | None:
         return self._last_gaze
 
+    @property
+    def last_raw_confidence(self) -> float:
+        """Most recent gaze confidence regardless of filtering, for display."""
+        return self._last_raw_confidence
+
     def update_frame(self, frame: FrameData) -> None:
         self._last_frame = frame
 
     def update_gaze(self, gaze: GazeData, min_confidence: float = 0.5) -> bool:
-        """Accept a gaze sample if it passes confidence and bounds checks."""
+        """Accept a gaze sample if confidence passes; position may exceed [0,1] at frame edges."""
+        self._last_raw_confidence = gaze.confidence
         if gaze.confidence < min_confidence:
-            return False
-        x, y = gaze.norm_pos
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
             return False
         self._last_gaze = gaze
         return True

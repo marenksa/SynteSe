@@ -47,7 +47,7 @@ class ConfidenceStreamPatch:
         outputs.send("blink", 0)
 
     def update(self, signals: SignalBus, outputs: OutputBus) -> None:
-        if signals.eye.is_eyes_closed:
+        if signals.eye.is_eyes_closed and not signals.eye.is_flutter_active:
             if self._eyes_closed_since is None:
                 self._eyes_closed_since = time.monotonic()
             elapsed_ms = (time.monotonic() - self._eyes_closed_since) * 1000
