@@ -31,7 +31,7 @@ class GazeVideoPlayer:
         recording: Recording,
         pipeline: Pipeline | None = None,
         output: MultiSink | None = None,
-        pd_sink: PureDataSink | None = None,
+        outputs: OutputBus | None = None,
         patch: Patch | None = None,
         region_size: int = 50,
         show_overlay: bool = False,
@@ -57,7 +57,7 @@ class GazeVideoPlayer:
         self.confidence_threshold = 0.6
         self.window_name = f"Gaze Player - {recording.recording_name}"
 
-        self._outputs = OutputBus(pd_sink)
+        self._outputs = outputs if outputs is not None else OutputBus()
         self._patch = patch if patch is not None else load_patch("color_music")
 
         # Blink/flutter display state
@@ -354,6 +354,7 @@ def main() -> None:
     show_overlay = not args.no_overlay
     pipeline = Pipeline()
     pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
+    outputs = OutputBus(pd_sink)
 
     patch = load_patch(args.patch)
 
@@ -377,7 +378,7 @@ def main() -> None:
                 recording,
                 pipeline=pipeline,
                 output=output,
-                pd_sink=pd_sink,
+                outputs=outputs,
                 patch=patch,
                 show_overlay=show_overlay,
                 gamma=args.gamma,
