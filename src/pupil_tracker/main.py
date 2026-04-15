@@ -9,7 +9,14 @@ import numpy as np
 
 from pupil_tracker.analyzer import BrightnessAnalyzer, BrightnessReading
 from pupil_tracker.client import PupilCaptureClient
-from pupil_tracker.output import ConsoleSink, ConsoleThresholdSink, FileSink, MultiSink
+from pupil_tracker.output import (
+    ConsoleSink,
+    ConsoleThresholdSink,
+    FileSink,
+    MultiSink,
+    PureDataFUDISink,
+    PureDataSink,
+)
 from pupil_tracker.processor import FrameProcessor
 
 
@@ -69,6 +76,10 @@ def run_tracker(
     output_file: str | None = None,
     show_video: bool = True,
     verbose: bool = False,
+    pd_osc: bool = False,
+    pd_fudi: bool = False,
+    pd_host: str = "127.0.0.1",
+    pd_port: int | None = None,
 ) -> None:
     """Run the brightness tracker.
 
@@ -80,6 +91,10 @@ def run_tracker(
         output_file: Optional file path to log data.
         show_video: Whether to display the video feed.
         verbose: Whether to print verbose console output.
+        pd_osc: Enable Pure Data output via OSC (requires mrpeach external).
+        pd_fudi: Enable Pure Data output via FUDI (no externals needed).
+        pd_host: Pure Data host address.
+        pd_port: Pure Data port (default: 9000 for OSC, 9001 for FUDI).
     """
     # Initialize components
     processor = FrameProcessor(region_size=region_size)
@@ -93,6 +108,14 @@ def run_tracker(
     if output_file:
         output.add_sink(FileSink(Path(output_file)))
 
+    # Pure Data outputs
+    if pd_osc:
+        osc_port = pd_port if pd_port else 9000
+        output.add_sink(PureDataSink(host=pd_host, port=osc_port))
+    if pd_fudi:
+        fudi_port = pd_port if pd_port else 9001
+        output.add_sink(PureDataFUDISink(host=pd_host, port=fudi_port))
+
     print("=" * 60)
     print("Pupil Brightness Tracker")
     print("=" * 60)
@@ -102,6 +125,10 @@ def run_tracker(
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
     if output_file:
         print(f"  Logging to: {output_file}")
+    if pd_osc:
+        print(f"  Pure Data (OSC): {pd_host}:{pd_port or 9000}")
+    if pd_fudi:
+        print(f"  Pure Data (FUDI): {pd_host}:{pd_port or 9001}")
     print("=" * 60)
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
@@ -205,6 +232,31 @@ def main() -> None:
         help="Enable verbose console output",
     )
 
+    # Pure Data output options
+    pd_group = parser.add_argument_group("Pure Data output")
+    pd_group.add_argument(
+        "--pd-osc",
+        action="store_true",
+        help="Stream to Pure Data via OSC (requires mrpeach external in Pd)",
+    )
+    pd_group.add_argument(
+        "--pd-fudi",
+        action="store_true",
+        help="Stream to Pure Data via FUDI/TCP (no externals needed)",
+    )
+    pd_group.add_argument(
+        "--pd-host",
+        type=str,
+        default="127.0.0.1",
+        help="Pure Data host address",
+    )
+    pd_group.add_argument(
+        "--pd-port",
+        type=int,
+        default=None,
+        help="Pure Data port (default: 9000 for OSC, 9001 for FUDI)",
+    )
+
     args = parser.parse_args()
 
     run_tracker(
@@ -215,6 +267,10 @@ def main() -> None:
         output_file=args.output,
         show_video=not args.no_video,
         verbose=args.verbose,
+        pd_osc=args.pd_osc,
+        pd_fudi=args.pd_fudi,
+        pd_host=args.pd_host,
+        pd_port=args.pd_port,
     )
 
 
