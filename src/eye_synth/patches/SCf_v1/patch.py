@@ -7,7 +7,7 @@ import time
 from eye_synth.output.overlay import OverlayConfig
 from eye_synth.signals.bus import OutputBus, SignalBus
 
-INTENTIONAL_MS = 250  # ms eyes must be closed to count as intentional (half the global 500ms)
+INTENTIONAL_MS = 400  # ms eyes must be closed to count as intentional
 
 
 class ConfidenceStreamPatch:
