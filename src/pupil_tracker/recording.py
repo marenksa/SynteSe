@@ -19,6 +19,7 @@ class RecordingInfo:
     start_time_s: float
     world_resolution: tuple[int, int]
     gaze_count: int
+    fixation_count: int
     frame_count: int
 
 
@@ -28,6 +29,18 @@ class GazeSample:
 
     timestamp: float
     norm_pos: tuple[float, float]  # Normalized position (0-1, origin bottom-left)
+    confidence: float
+
+
+@dataclass
+class FixationSample:
+    """A fixation event from Pupil's fixation detection."""
+
+    id: int
+    timestamp: float  # Start timestamp
+    duration: float  # Duration in ms
+    norm_pos: tuple[float, float]  # Normalized position (0-1, origin bottom-left)
+    dispersion: float  # Dispersion in degrees
     confidence: float
 
 
@@ -44,10 +57,15 @@ class Recording:
 
         # Load timestamps
         self.world_timestamps = np.load(self.path / "world_timestamps.npy")
-        self.gaze_timestamps = np.load(self.path / "gaze_timestamps.npy")
 
-        # Load gaze data
+        # Load gaze data (may filter to single eye for binocular recordings)
         self.gaze_data = self._load_gaze_data()
+
+        # Build gaze_timestamps from loaded data (not from file, which may have both eyes)
+        self.gaze_timestamps = np.array([g.timestamp for g in self.gaze_data])
+
+        # Load fixation data
+        self.fixation_data = self._load_fixation_data()
 
         # Video capture (lazy loaded)
         self._video: cv2.VideoCapture | None = None
@@ -78,25 +96,107 @@ class Recording:
             self.world_resolution = (1280, 720)
 
     def _load_gaze_data(self) -> list[GazeSample]:
-        """Load all gaze samples from gaze.pldata."""
+        """Load gaze samples from gaze.pldata.
+
+        Handles both monocular and binocular recordings:
+        - Prefers combined gaze (gaze.3d.01. or gaze.2d.01.) if available
+        - For binocular, picks the eye with higher average confidence
+        - Uses whatever is available for monocular recordings
+        """
         gaze_path = self.path / "gaze.pldata"
         if not gaze_path.exists():
             return []
 
-        samples = []
+        # First pass: collect all samples grouped by topic
+        samples_by_topic: dict[str, list[GazeSample]] = {}
         with open(gaze_path, "rb") as f:
             unpacker = msgpack.Unpacker(f, raw=False, strict_map_key=False)
             for topic, payload in unpacker:
                 data = msgpack.unpackb(payload, raw=False, strict_map_key=False)
                 norm_pos = data.get("norm_pos", [0.5, 0.5])
-                samples.append(
-                    GazeSample(
-                        timestamp=data.get("timestamp", 0),
-                        norm_pos=(norm_pos[0], norm_pos[1]),
-                        confidence=data.get("confidence", 0),
-                    )
+                sample = GazeSample(
+                    timestamp=data.get("timestamp", 0),
+                    norm_pos=(norm_pos[0], norm_pos[1]),
+                    confidence=data.get("confidence", 0),
                 )
-        return samples
+                if topic not in samples_by_topic:
+                    samples_by_topic[topic] = []
+                samples_by_topic[topic].append(sample)
+
+        def avg_confidence(samples: list[GazeSample]) -> float:
+            if not samples:
+                return 0.0
+            return sum(s.confidence for s in samples) / len(samples)
+
+        # Choose the best topic (prefer combined, then best single eye)
+        # Priority: combined 3d > combined 2d > then pick by confidence
+        combined_priority = ["gaze.3d.01.", "gaze.2d.01."]
+
+        for preferred in combined_priority:
+            if preferred in samples_by_topic:
+                samples = samples_by_topic[preferred]
+                if len(samples_by_topic) > 1:
+                    other_topics = [t for t in samples_by_topic if t != preferred]
+                    print(
+                        f"[Recording] Using {preferred} ({len(samples)} samples), "
+                        f"ignoring: {other_topics}"
+                    )
+                return sorted(samples, key=lambda s: s.timestamp)
+
+        # No combined gaze - pick the eye with best average confidence
+        if samples_by_topic:
+            best_topic = max(
+                samples_by_topic.keys(),
+                key=lambda t: avg_confidence(samples_by_topic[t]),
+            )
+            samples = samples_by_topic[best_topic]
+            best_conf = avg_confidence(samples)
+
+            if len(samples_by_topic) > 1:
+                other_topics = [t for t in samples_by_topic if t != best_topic]
+                other_confs = [
+                    f"{t}: {avg_confidence(samples_by_topic[t]):.2f}"
+                    for t in other_topics
+                ]
+                print(
+                    f"[Recording] Using {best_topic} (conf={best_conf:.2f}, "
+                    f"{len(samples)} samples), ignoring: {other_confs}"
+                )
+            return sorted(samples, key=lambda s: s.timestamp)
+
+        return []
+
+    def _load_fixation_data(self) -> list[FixationSample]:
+        """Load all fixation events from fixations.pldata.
+
+        Fixations are deduplicated by ID since Pupil outputs multiple
+        updates for each fixation as it progresses.
+        """
+        fixation_path = self.path / "fixations.pldata"
+        if not fixation_path.exists():
+            return []
+
+        # Use dict to deduplicate by ID, keeping the last (most complete) entry
+        fixations_by_id: dict[int, FixationSample] = {}
+
+        with open(fixation_path, "rb") as f:
+            unpacker = msgpack.Unpacker(f, raw=False, strict_map_key=False)
+            for topic, payload in unpacker:
+                data = msgpack.unpackb(payload, raw=False, strict_map_key=False)
+                norm_pos = data.get("norm_pos", [0.5, 0.5])
+                fixation_id = data.get("id", 0)
+
+                fixations_by_id[fixation_id] = FixationSample(
+                    id=fixation_id,
+                    timestamp=data.get("timestamp", 0),
+                    duration=data.get("duration", 0),
+                    norm_pos=(norm_pos[0], norm_pos[1]),
+                    dispersion=data.get("dispersion", 0),
+                    confidence=data.get("confidence", 0),
+                )
+
+        # Return sorted by timestamp
+        return sorted(fixations_by_id.values(), key=lambda f: f.timestamp)
 
     @property
     def video(self) -> cv2.VideoCapture:
@@ -127,6 +227,7 @@ class Recording:
             start_time_s=self.start_time_s,
             world_resolution=self.world_resolution,
             gaze_count=len(self.gaze_data),
+            fixation_count=len(self.fixation_data),
             frame_count=len(self.world_timestamps),
         )
 
@@ -229,6 +330,40 @@ class Recording:
         y = int((1 - gaze.norm_pos[1]) * height)  # Flip Y axis
 
         return (x, y)
+
+    def fixation_to_pixel(
+        self,
+        fixation: FixationSample,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+    ) -> tuple[int, int]:
+        """Convert fixation normalized position to pixel coordinates."""
+        width = frame_width or self.world_resolution[0]
+        height = frame_height or self.world_resolution[1]
+
+        x = int(fixation.norm_pos[0] * width)
+        y = int((1 - fixation.norm_pos[1]) * height)  # Flip Y axis
+
+        return (x, y)
+
+    def get_fixation_for_frame(self, frame_index: int) -> FixationSample | None:
+        """Get the fixation that starts closest to this frame's timestamp.
+
+        Only returns a fixation if its start time is within one frame period
+        of the frame timestamp. This ensures we trigger once per fixation.
+        """
+        if not self.fixation_data:
+            return None
+
+        frame_ts = self.get_frame_timestamp(frame_index)
+        frame_period = 1.0 / self.fps if self.fps > 0 else 0.033
+
+        for fixation in self.fixation_data:
+            # Check if fixation starts within this frame's time window
+            if abs(fixation.timestamp - frame_ts) <= frame_period / 2:
+                return fixation
+
+        return None
 
     def close(self) -> None:
         """Release video resources."""

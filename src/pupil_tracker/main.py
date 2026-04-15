@@ -6,12 +6,12 @@ import sys
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
-from pupil_tracker.client import PupilCaptureClient
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent
+from pupil_tracker.client import FixationData, PupilCaptureClient
 from pupil_tracker.output import (
     ColorConsoleSink,
     MultiSink,
-    PureDataFUDISink,
+    PureDataSink,
 )
 from pupil_tracker.processor import FrameProcessor
 
@@ -191,8 +191,13 @@ def run_tracker(
     output = MultiSink()
     output.add_sink(ColorConsoleSink(verbose=verbose))
 
+    # Set up Pure Data output for note events
+    pd_sink: PureDataSink | None = None
     if pd:
-        output.add_sink(PureDataFUDISink(host=pd_host, port=pd_port))
+        pd_sink = PureDataSink(host=pd_host, port=pd_port)
+
+    # Track triggered fixation IDs to avoid double-triggering
+    triggered_fixations: set[int] = set()
 
     print("=" * 60)
     print("Pupil Color-to-Music Tracker")
@@ -201,7 +206,7 @@ def run_tracker(
     print(f"  Region size: {region_size}px")
     print(f"  Smoothing window: {smoothing} frames")
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
-    print("  Mode: COLOR → MUSIC (wavelength-based note mapping)")
+    print("  Mode: COLOR → MUSIC (Pupil fixation-based triggering)")
     if pd:
         print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
     print("=" * 60)
@@ -209,6 +214,14 @@ def run_tracker(
     print()
 
     last_reading: ColorReading | None = None
+
+    def fixation_to_pixel(
+        fixation: FixationData, width: int, height: int
+    ) -> tuple[int, int]:
+        """Convert fixation normalized position to pixel coordinates."""
+        x = int(fixation.norm_pos[0] * width)
+        y = int((1 - fixation.norm_pos[1]) * height)  # Flip Y axis
+        return (x, y)
 
     try:
         with PupilCaptureClient(host=host, port=port) as client:
@@ -221,12 +234,58 @@ def run_tracker(
                 if message.frame is not None:
                     processor.update_frame(message.frame)
 
-                    # Extract gaze region and analyze
+                    # Extract gaze region and analyze for display
                     gaze_region = processor.extract_region()
                     if gaze_region is not None:
-                        reading = analyzer.analyze(gaze_region)
-                        output.emit(reading)
-                        last_reading = reading
+                        color_reading = analyzer.analyze(gaze_region)
+                        output.emit(color_reading)
+                        last_reading = color_reading
+
+                    # Handle Pupil fixation events
+                    if (
+                        message.fixation is not None
+                        and message.fixation.id not in triggered_fixations
+                        and pd_sink is not None
+                    ):
+                        fixation = message.fixation
+                        # Extract region at fixation point
+                        frame_data = message.frame
+                        fix_x, fix_y = fixation_to_pixel(
+                            fixation, frame_data.width, frame_data.height
+                        )
+                        half_size = region_size // 2
+                        x1 = max(0, fix_x - half_size)
+                        y1 = max(0, fix_y - half_size)
+                        x2 = min(frame_data.width, fix_x + half_size)
+                        y2 = min(frame_data.height, fix_y + half_size)
+
+                        if x2 > x1 and y2 > y1:
+                            region = frame_data.data[y1:y2, x1:x2]
+                            # Create a minimal gaze region for analysis
+                            from pupil_tracker.processor import GazeRegion
+
+                            fix_region = GazeRegion(
+                                center_x=fix_x,
+                                center_y=fix_y,
+                                region=region,
+                                frame_width=frame_data.width,
+                                frame_height=frame_data.height,
+                                timestamp=fixation.timestamp,
+                                confidence=fixation.confidence,
+                            )
+                            reading = analyzer.analyze(fix_region)
+                            note_event = NoteEvent(
+                                timestamp=fixation.timestamp,
+                                note=reading.note,
+                                octave=reading.octave,
+                                midi_note=reading.midi_note,
+                                brightness=reading.smoothed_brightness / 255.0,
+                                center_x=fix_x,
+                                center_y=fix_y,
+                                duration_ms=fixation.duration,
+                            )
+                            pd_sink.emit(note_event)
+                            triggered_fixations.add(fixation.id)
 
                     # Display video with overlay
                     if show_video:
@@ -253,6 +312,8 @@ def run_tracker(
         print("\n[INFO] Interrupted by user.")
     finally:
         output.close()
+        if pd_sink is not None:
+            pd_sink.close()
         if show_video:
             cv2.destroyAllWindows()
 
@@ -286,7 +347,7 @@ def main() -> None:
     parser.add_argument(
         "--smoothing",
         type=int,
-        default=5,
+        default=3,
         help="Number of frames to average for smoothing",
     )
     parser.add_argument(
@@ -306,19 +367,19 @@ def main() -> None:
     stability_group.add_argument(
         "--note-stability",
         type=int,
-        default=8,
+        default=2,
         help="Frames for note stability (lower = faster response)",
     )
     stability_group.add_argument(
         "--octave-stability",
         type=int,
-        default=15,
+        default=3,
         help="Frames for octave stability (higher = more stable)",
     )
     stability_group.add_argument(
         "--octave-threshold",
         type=float,
-        default=0.8,
+        default=0.5,
         help="Agreement threshold for octave changes 0-1 (higher = harder to change)",
     )
 

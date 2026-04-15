@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
-from pupil_tracker.output import MultiSink, PureDataFUDISink
-from pupil_tracker.recording import Recording
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent
+from pupil_tracker.output import MultiSink, PureDataSink
+from pupil_tracker.recording import FixationSample, Recording
 
 if TYPE_CHECKING:
     from pupil_tracker.recording import GazeSample
@@ -62,6 +62,7 @@ class GazeVideoPlayer:
         recording: Recording,
         analyzer: ColorAnalyzer | None = None,
         output: MultiSink | None = None,
+        pd_sink: PureDataSink | None = None,
         region_size: int = 50,
         show_overlay: bool = False,
         gamma: float = 1.0,
@@ -69,6 +70,7 @@ class GazeVideoPlayer:
         self.recording = recording
         self.analyzer = analyzer
         self.output = output
+        self.pd_sink = pd_sink
         self.region_size = region_size
         self.show_overlay = show_overlay
         self.gamma = gamma
@@ -89,6 +91,9 @@ class GazeVideoPlayer:
 
         # Window name
         self.window_name = f"Gaze Player - {recording.recording_name}"
+
+        # Track which fixations have been triggered (by ID)
+        self._triggered_fixations: set[int] = set()
 
     def _build_gamma_lut(self, gamma: float) -> np.ndarray:
         """Build a lookup table for gamma correction.
@@ -135,6 +140,34 @@ class GazeVideoPlayer:
             frame_height=height,
             timestamp=gaze.timestamp,
             confidence=gaze.confidence,
+        )
+
+    def extract_fixation_region(
+        self, frame: np.ndarray, fixation: FixationSample
+    ) -> GazeRegionCompat | None:
+        """Extract a region around the fixation point from the frame."""
+        height, width = frame.shape[:2]
+        fix_x, fix_y = self.recording.fixation_to_pixel(fixation, width, height)
+
+        # Calculate region bounds
+        half_size = self.region_size // 2
+        x1 = max(0, fix_x - half_size)
+        y1 = max(0, fix_y - half_size)
+        x2 = min(width, fix_x + half_size)
+        y2 = min(height, fix_y + half_size)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        region = frame[y1:y2, x1:x2]
+        return GazeRegionCompat(
+            center_x=fix_x,
+            center_y=fix_y,
+            region=region,
+            frame_width=width,
+            frame_height=height,
+            timestamp=fixation.timestamp,
+            confidence=fixation.confidence,
         )
 
     def draw_color_info(self, frame: np.ndarray) -> np.ndarray:
@@ -296,6 +329,7 @@ class GazeVideoPlayer:
         print(f"\nPlaying: {self.recording.recording_name}")
         print(f"Duration: {self.recording.duration_s:.1f}s, {total_frames} frames @ {self.recording.fps:.1f} FPS")
         print(f"Gaze samples: {len(self.recording.gaze_data)}")
+        print(f"Fixations: {len(self.recording.fixation_data)}")
         print("\nPress 'H' for keyboard controls, 'Q' to quit\n")
 
         # Initial seek
@@ -332,10 +366,35 @@ class GazeVideoPlayer:
                 if gaze is not None and gaze.confidence >= self.confidence_threshold:
                     region = self.extract_region(current_frame, gaze)
                     if region is not None:
-                        reading = self.analyzer.analyze(region)
-                        self.last_reading = reading
+                        color_reading = self.analyzer.analyze(region)
+                        self.last_reading = color_reading
                         if self.output is not None:
-                            self.output.emit(reading)
+                            self.output.emit(color_reading)
+
+                # Check for Pupil fixation events
+                fixation = self.recording.get_fixation_for_frame(self.frame_index)
+                if (
+                    fixation is not None
+                    and fixation.id not in self._triggered_fixations
+                    and self.pd_sink is not None
+                ):
+                    # Extract region at fixation point and analyze
+                    fix_region = self.extract_fixation_region(current_frame, fixation)
+                    if fix_region is not None:
+                        reading = self.analyzer.analyze(fix_region)
+                        # Create and emit NoteEvent
+                        note_event = NoteEvent(
+                            timestamp=fixation.timestamp,
+                            note=reading.note,
+                            octave=reading.octave,
+                            midi_note=reading.midi_note,
+                            brightness=reading.smoothed_brightness / 255.0,
+                            center_x=reading.center_x,
+                            center_y=reading.center_y,
+                            duration_ms=fixation.duration,
+                        )
+                        self.pd_sink.emit(note_event)
+                        self._triggered_fixations.add(fixation.id)
 
             # Draw overlays
             display_frame = current_frame.copy()
@@ -474,15 +533,16 @@ def main() -> None:
     # Initialize color analyzer and output based on flags
     analyzer = None
     output = None
+    pd_sink = None
     show_overlay = args.overlay or args.pd
 
     if show_overlay:
         analyzer = ColorAnalyzer()
 
     if args.pd:
-        output = MultiSink()
-        output.add_sink(PureDataFUDISink(host=args.pd_host, port=args.pd_port))
+        pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
         print(f"Pure Data output enabled: {args.pd_host}:{args.pd_port}")
+        print("  Using Pupil fixation detection")
 
     # Load and play
     try:
@@ -494,6 +554,7 @@ def main() -> None:
             print(f"  Resolution: {info.world_resolution[0]}x{info.world_resolution[1]}")
             print(f"  Frames: {info.frame_count}")
             print(f"  Gaze samples: {info.gaze_count}")
+            print(f"  Fixations: {info.fixation_count}")
 
             if args.gamma != 1.0:
                 print(f"  Gamma correction: {args.gamma}")
@@ -502,6 +563,7 @@ def main() -> None:
                 recording,
                 analyzer=analyzer,
                 output=output,
+                pd_sink=pd_sink,
                 region_size=args.region_size,
                 show_overlay=show_overlay,
                 gamma=args.gamma,
@@ -519,6 +581,8 @@ def main() -> None:
     finally:
         if output is not None:
             output.close()
+        if pd_sink is not None:
+            pd_sink.close()
 
 
 if __name__ == "__main__":

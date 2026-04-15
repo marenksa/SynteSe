@@ -63,6 +63,24 @@ class ColorReading:
     confidence: float
 
 
+@dataclass(frozen=True)
+class NoteEvent:
+    """A discrete note trigger event from Pupil fixation detection.
+
+    Created when a Pupil fixation event occurs, using color analysis
+    to determine the note from the fixation location.
+    """
+
+    timestamp: float
+    note: Note  # From hue at fixation position
+    octave: int  # From brightness at fixation position
+    midi_note: int  # Combined MIDI note
+    brightness: float  # For velocity/volume mapping in Pd (0-1 normalized)
+    center_x: int
+    center_y: int
+    duration_ms: float  # Fixation duration from Pupil
+
+
 class ColorAnalyzer:
     """Analyzes color and brightness for musical note generation.
 
@@ -96,16 +114,17 @@ class ColorAnalyzer:
     MAX_OCTAVE = 6
 
     # Default minimum saturation for reliable hue detection (0-255 scale)
-    # Pixels below this threshold have unreliable hue values
-    DEFAULT_MIN_SATURATION = 50
+    # Lowered to 20 to detect pastel colors (light pink, pale blue, etc.)
+    # Very low saturation (<20) typically means gray/white where hue is meaningless
+    DEFAULT_MIN_SATURATION = 20
 
     def __init__(
         self,
-        smoothing_window: int = 15,
-        note_stability_frames: int = 8,
-        octave_stability_frames: int = 15,
-        note_stability_threshold: float = 0.7,
-        octave_stability_threshold: float = 0.8,
+        smoothing_window: int = 3,
+        note_stability_frames: int = 2,
+        octave_stability_frames: int = 3,
+        note_stability_threshold: float = 0.5,
+        octave_stability_threshold: float = 0.5,
         min_saturation: int = DEFAULT_MIN_SATURATION,
     ) -> None:
         """Initialize the color analyzer.
@@ -326,13 +345,15 @@ class ColorAnalyzer:
     def analyze(self, gaze_region: GazeRegion) -> ColorReading:
         """Analyze color and brightness of a gaze region.
 
-        Uses Gaussian-weighted averaging and temporal smoothing for stability.
+        Maps colors to musical notes:
+            - Hue → Note (C through B based on wavelength)
+            - Brightness → Octave (2-6)
 
         Args:
             gaze_region: The extracted region around the gaze point.
 
         Returns:
-            ColorReading with note, octave, and MIDI note information.
+            ColorReading with note, octave, and color information.
         """
         region = gaze_region.region
 

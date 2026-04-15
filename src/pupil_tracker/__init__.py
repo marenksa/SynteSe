@@ -1,15 +1,22 @@
 """Pupil Core color-to-music tracker - map gaze colors to musical notes."""
 
-from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
-from pupil_tracker.client import FrameData, GazeData, Message, PupilCaptureClient
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note, NoteEvent
+from pupil_tracker.client import (
+    FixationData,
+    FrameData,
+    GazeData,
+    Message,
+    PupilCaptureClient,
+)
 from pupil_tracker.output import (
     ColorConsoleSink,
     MultiSink,
+    NoteEventSink,
     OutputSink,
-    PureDataFUDISink,
+    PureDataSink,
 )
 from pupil_tracker.processor import FrameProcessor, GazeRegion
-from pupil_tracker.recording import GazeSample, Recording, RecordingInfo
+from pupil_tracker.recording import FixationSample, GazeSample, Recording, RecordingInfo
 
 __version__ = "0.1.0"
 
@@ -18,6 +25,7 @@ __all__ = [
     "PupilCaptureClient",
     "GazeData",
     "FrameData",
+    "FixationData",
     "Message",
     # Processor
     "FrameProcessor",
@@ -25,14 +33,17 @@ __all__ = [
     # Analyzer
     "ColorAnalyzer",
     "ColorReading",
+    "NoteEvent",
     "Note",
     # Output
     "OutputSink",
+    "NoteEventSink",
     "MultiSink",
     "ColorConsoleSink",
-    "PureDataFUDISink",
+    "PureDataSink",
     # Recording playback
     "Recording",
     "RecordingInfo",
     "GazeSample",
+    "FixationSample",
 ]

@@ -3,7 +3,7 @@
 import socket
 from typing import Protocol
 
-from pupil_tracker.analyzer import ColorReading, Note
+from pupil_tracker.analyzer import ColorReading, Note, NoteEvent
 
 
 class OutputSink(Protocol):
@@ -15,6 +15,26 @@ class OutputSink(Protocol):
         Args:
             reading: The color reading to emit.
         """
+        ...
+
+    def close(self) -> None:
+        """Close the sink and release any resources."""
+        ...
+
+
+class NoteEventSink(Protocol):
+    """Protocol for output sinks that receive discrete note events."""
+
+    def emit(self, event: NoteEvent) -> None:
+        """Emit a note event to the sink.
+
+        Args:
+            event: The note event to emit.
+        """
+        ...
+
+    def stop(self) -> None:
+        """Send stop message to silence output."""
         ...
 
     def close(self) -> None:
@@ -101,17 +121,15 @@ class ColorConsoleSink:
         print()
 
 
-class PureDataFUDISink:
-    """Output sink that streams color/note data to Pure Data via FUDI (TCP).
+class PureDataSink:
+    """Output sink that sends note events to Pure Data via FUDI (TCP).
 
     FUDI is Pure Data's native protocol - simpler than OSC, no externals needed.
-    Sends MIDI note number for easy frequency conversion using Pd's mtof object.
+    Sends discrete note_on messages when fixation triggers a note.
 
     Messages (FUDI format):
-        midinote <int>;
-        note <int>;
-        octave <int>;
-        brightness <float>;
+        note_on <midi_note> <brightness>;
+        stop;
     """
 
     def __init__(
@@ -119,7 +137,7 @@ class PureDataFUDISink:
         host: str = "127.0.0.1",
         port: int = 9001,
     ) -> None:
-        """Initialize the Pure Data FUDI sink.
+        """Initialize the Pure Data sink.
 
         Args:
             host: IP address where Pure Data is running.
@@ -139,31 +157,18 @@ class PureDataFUDISink:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._socket.connect((self._host, self._port))
             self._connected = True
-            print(f"[PureData FUDI] Connected to {self._host}:{self._port}")
+            print(f"[PureData] Connected to {self._host}:{self._port}")
             return True
         except (ConnectionRefusedError, OSError) as e:
-            print(f"[PureData FUDI] Connection failed: {e}")
+            print(f"[PureData] Connection failed: {e}")
             self._socket = None
             self._connected = False
             return False
 
-    def emit(self, reading: ColorReading) -> None:
-        """Send color reading to Pure Data via FUDI.
-
-        Args:
-            reading: The color reading to send.
-        """
+    def _send(self, message: str) -> None:
+        """Send a message to Pure Data."""
         if not self._ensure_connected():
             return
-
-        # Send all values in a single message batch
-        normalized_brightness = reading.smoothed_brightness / 255.0
-        message = (
-            f"midinote {reading.midi_note};\n"
-            f"note {int(reading.note)};\n"
-            f"octave {reading.octave};\n"
-            f"brightness {normalized_brightness:.4f};\n"
-        )
 
         try:
             if self._socket:
@@ -172,15 +177,30 @@ class PureDataFUDISink:
             self._connected = False
             self._socket = None
 
+    def emit(self, event: NoteEvent) -> None:
+        """Send note trigger to Pure Data.
+
+        Sends the MIDI note (derived from color/brightness analysis)
+        along with brightness for velocity mapping.
+
+        Args:
+            event: The note event to send.
+        """
+        message = f"note_on {event.midi_note} {event.brightness:.2f};\n"
+        self._send(message)
+
+    def stop(self) -> None:
+        """Send stop message to silence Pure Data."""
+        self._send("stop;\n")
+
     def close(self) -> None:
         """Close the TCP connection, sending stop message to silence Pd."""
         if self._socket and self._connected:
             try:
-                # Send stop message to silence Pd before disconnecting
                 self._socket.send(b"stop;\n")
             except (BrokenPipeError, ConnectionResetError):
                 pass
             self._socket.close()
             self._socket = None
             self._connected = False
-        print("[PureData FUDI] Closed")
+        print("[PureData] Closed")

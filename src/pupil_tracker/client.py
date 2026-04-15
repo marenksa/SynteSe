@@ -31,11 +31,25 @@ class FrameData:
 
 
 @dataclass(frozen=True)
+class FixationData:
+    """Fixation data from Pupil Capture's fixation detector."""
+
+    id: int
+    timestamp: float
+    duration: float  # Duration in ms
+    norm_pos: tuple[float, float]  # Normalized position (0-1)
+    dispersion: float  # Dispersion in degrees
+    confidence: float
+    topic: str
+
+
+@dataclass(frozen=True)
 class Message:
     """Union type for messages received from Pupil Capture."""
 
     gaze: GazeData | None = None
     frame: FrameData | None = None
+    fixation: FixationData | None = None
 
 
 class PupilCaptureClient:
@@ -96,9 +110,12 @@ class PupilCaptureClient:
         self._subscriber.setsockopt(zmq.LINGER, 0)  # Don't wait on close
         self._subscriber.connect(f"tcp://{self._host}:{self._sub_port}")
 
-        # Subscribe to gaze and frame topics
+        # Subscribe to gaze, frame, and fixation topics
+        # For gaze, prefer combined (01) over single eye to avoid binocular flicker
+        # We subscribe to all and filter in _get_latest_messages
         self._subscriber.subscribe("gaze")
         self._subscriber.subscribe("frame.world")
+        self._subscriber.subscribe("fixations")
 
         # Drain any buffered messages to start fresh
         self._drain_buffer()
@@ -124,44 +141,87 @@ class PupilCaptureClient:
             print(f"[PupilClient] Drained {count} buffered messages.")
         return count
 
-    def _get_latest_messages(self) -> tuple[list[bytes] | None, list[bytes] | None]:
-        """Get the latest gaze and frame messages, discarding older ones.
+    # Gaze topic priority (prefer combined; for single eye, we pick by confidence)
+    GAZE_COMBINED_TOPICS = {"gaze.3d.01.", "gaze.2d.01."}
+
+    def _is_combined_gaze(self, topic: str) -> bool:
+        """Check if topic is combined (binocular) gaze."""
+        return any(topic.startswith(t) for t in self.GAZE_COMBINED_TOPICS)
+
+    def _get_latest_messages(
+        self,
+    ) -> tuple[list[bytes] | None, list[bytes] | None, list[bytes] | None]:
+        """Get the latest gaze, frame, and fixation messages, discarding older ones.
 
         This drains the buffer and returns only the most recent of each type.
+        For gaze, prefers combined gaze; for single-eye, picks higher confidence.
 
         Returns:
-            Tuple of (latest_gaze_parts, latest_frame_parts), either can be None.
+            Tuple of (latest_gaze_parts, latest_frame_parts, latest_fixation_parts).
         """
         if self._subscriber is None:
-            return None, None
+            return None, None, None
 
         latest_gaze: list[bytes] | None = None
+        latest_gaze_combined: bool = False
+        latest_gaze_confidence: float = -1.0
         latest_frame: list[bytes] | None = None
+        latest_fixation: list[bytes] | None = None
+
+        def should_replace_gaze(topic: str, confidence: float) -> bool:
+            """Check if new gaze should replace current best."""
+            nonlocal latest_gaze_combined, latest_gaze_confidence
+            is_combined = self._is_combined_gaze(topic)
+
+            # Always prefer combined over single-eye
+            if is_combined and not latest_gaze_combined:
+                return True
+            if not is_combined and latest_gaze_combined:
+                return False
+
+            # Same type: prefer higher confidence (or newer if equal)
+            return confidence >= latest_gaze_confidence
+
+        def update_gaze(parts: list[bytes], topic: str) -> None:
+            """Update latest gaze tracking state."""
+            nonlocal latest_gaze, latest_gaze_combined, latest_gaze_confidence
+            # Parse confidence from payload
+            payload = msgpack.loads(parts[1], raw=False)
+            confidence = float(payload.get("confidence", 0.0))
+
+            if should_replace_gaze(topic, confidence):
+                latest_gaze = parts
+                latest_gaze_combined = self._is_combined_gaze(topic)
+                latest_gaze_confidence = confidence
 
         # First, do one blocking receive to ensure we have at least one message
         try:
             parts = self._subscriber.recv_multipart()
             topic = parts[0].decode("utf-8")
             if topic.startswith("gaze"):
-                latest_gaze = parts
+                update_gaze(parts, topic)
             elif topic.startswith("frame.world"):
                 latest_frame = parts
+            elif topic.startswith("fixations"):
+                latest_fixation = parts
         except zmq.Again:
-            return None, None
+            return None, None, None
 
-        # Now drain all remaining messages, keeping only the latest of each type
+        # Now drain all remaining messages, keeping only the best of each type
         while True:
             try:
                 parts = self._subscriber.recv_multipart(flags=zmq.NOBLOCK)
                 topic = parts[0].decode("utf-8")
                 if topic.startswith("gaze"):
-                    latest_gaze = parts
+                    update_gaze(parts, topic)
                 elif topic.startswith("frame.world"):
                     latest_frame = parts
+                elif topic.startswith("fixations"):
+                    latest_fixation = parts
             except zmq.Again:
                 break
 
-        return latest_gaze, latest_frame
+        return latest_gaze, latest_frame, latest_fixation
 
     def disconnect(self) -> None:
         """Disconnect from Pupil Capture and clean up resources."""
@@ -182,6 +242,19 @@ class PupilCaptureClient:
         return GazeData(
             timestamp=payload.get("timestamp", 0.0),
             norm_pos=(float(norm_pos[0]), float(norm_pos[1])),
+            confidence=float(payload.get("confidence", 0.0)),
+            topic=topic,
+        )
+
+    def _parse_fixation(self, topic: str, payload: dict) -> FixationData:
+        """Parse a fixation message from the payload."""
+        norm_pos = payload.get("norm_pos", (0.0, 0.0))
+        return FixationData(
+            id=int(payload.get("id", 0)),
+            timestamp=payload.get("timestamp", 0.0),
+            duration=float(payload.get("duration", 0.0)),
+            norm_pos=(float(norm_pos[0]), float(norm_pos[1])),
+            dispersion=float(payload.get("dispersion", 0.0)),
             confidence=float(payload.get("confidence", 0.0)),
             topic=topic,
         )
@@ -264,6 +337,8 @@ class PupilCaptureClient:
             frame = self._parse_frame(topic, payload)
             if frame is not None:
                 return Message(frame=frame)
+        elif topic.startswith("fixations"):
+            return Message(fixation=self._parse_fixation(topic, payload))
 
         return Message()
 
@@ -285,22 +360,38 @@ class PupilCaptureClient:
         while True:
             try:
                 # Get the LATEST messages, discarding any buffered old ones
-                latest_gaze_parts, latest_frame_parts = self._get_latest_messages()
+                latest_gaze_parts, latest_frame_parts, latest_fixation_parts = (
+                    self._get_latest_messages()
+                )
                 timeout_count = 0
+
+                # Parse fixation if we got one
+                fixation_data = None
+                if latest_fixation_parts is not None:
+                    fix_msg = self._parse_parts(latest_fixation_parts)
+                    fixation_data = fix_msg.fixation
 
                 # Yield frame message if we got one
                 if latest_frame_parts is not None:
                     msg = self._parse_parts(latest_frame_parts)
                     if msg.frame is not None:
-                        # Also include latest gaze in the same message
+                        # Include latest gaze and fixation in the same message
+                        gaze_data = None
                         if latest_gaze_parts is not None:
                             gaze_msg = self._parse_parts(latest_gaze_parts)
-                            yield Message(gaze=gaze_msg.gaze, frame=msg.frame)
-                        else:
-                            yield msg
+                            gaze_data = gaze_msg.gaze
+                        yield Message(
+                            gaze=gaze_data,
+                            frame=msg.frame,
+                            fixation=fixation_data,
+                        )
                 elif latest_gaze_parts is not None:
-                    # Only gaze, no frame this cycle
-                    yield self._parse_parts(latest_gaze_parts)
+                    # Only gaze (and possibly fixation), no frame this cycle
+                    gaze_msg = self._parse_parts(latest_gaze_parts)
+                    yield Message(gaze=gaze_msg.gaze, fixation=fixation_data)
+                elif fixation_data is not None:
+                    # Only fixation
+                    yield Message(fixation=fixation_data)
 
             except zmq.Again:
                 timeout_count += 1
