@@ -1,24 +1,79 @@
 """Video player with gaze overlay for Pupil Capture recordings."""
 
+from __future__ import annotations
+
 import argparse
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
+from pupil_tracker.analyzer import ColorAnalyzer, ColorReading, Note
+from pupil_tracker.output import MultiSink, PureDataFUDISink
 from pupil_tracker.recording import Recording
+
+if TYPE_CHECKING:
+    from pupil_tracker.recording import GazeSample
+
+
+# BGR colors for each note (matching the hue ranges)
+NOTE_BGR_COLORS: dict[Note, tuple[int, int, int]] = {
+    Note.C: (60, 60, 220),  # Red
+    Note.D: (60, 140, 255),  # Orange
+    Note.E: (60, 220, 255),  # Yellow
+    Note.F: (60, 180, 60),  # Green
+    Note.G: (180, 180, 60),  # Cyan
+    Note.A: (220, 120, 60),  # Blue
+    Note.B: (180, 60, 180),  # Violet
+}
+
+NOTE_COLOR_NAMES: dict[Note, str] = {
+    Note.C: "Red",
+    Note.D: "Orange",
+    Note.E: "Yellow",
+    Note.F: "Green",
+    Note.G: "Cyan",
+    Note.A: "Blue",
+    Note.B: "Violet",
+}
+
+
+@dataclass
+class GazeRegionCompat:
+    """Compatibility wrapper to match FrameProcessor.GazeRegion interface."""
+    center_x: int
+    center_y: int
+    region: np.ndarray
+    frame_width: int
+    frame_height: int
+    timestamp: float
+    confidence: float
 
 
 class GazeVideoPlayer:
     """Interactive video player that displays gaze position overlay."""
 
-    def __init__(self, recording: Recording):
+    def __init__(
+        self,
+        recording: Recording,
+        analyzer: ColorAnalyzer | None = None,
+        output: MultiSink | None = None,
+        region_size: int = 50,
+        show_overlay: bool = False,
+    ):
         self.recording = recording
+        self.analyzer = analyzer
+        self.output = output
+        self.region_size = region_size
+        self.show_overlay = show_overlay
         self.frame_index = 0
         self.playing = False
         self.playback_speed = 1.0
+        self.last_reading: ColorReading | None = None
 
         # Display settings
         self.gaze_radius = 20
@@ -29,6 +84,75 @@ class GazeVideoPlayer:
 
         # Window name
         self.window_name = f"Gaze Player - {recording.recording_name}"
+
+    def extract_region(
+        self, frame: np.ndarray, gaze: GazeSample
+    ) -> GazeRegionCompat | None:
+        """Extract a region around the gaze point from the frame."""
+        height, width = frame.shape[:2]
+        gaze_x, gaze_y = self.recording.gaze_to_pixel(gaze, width, height)
+
+        # Calculate region bounds
+        half_size = self.region_size // 2
+        x1 = max(0, gaze_x - half_size)
+        y1 = max(0, gaze_y - half_size)
+        x2 = min(width, gaze_x + half_size)
+        y2 = min(height, gaze_y + half_size)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        region = frame[y1:y2, x1:x2]
+        return GazeRegionCompat(
+            center_x=gaze_x,
+            center_y=gaze_y,
+            region=region,
+            frame_width=width,
+            frame_height=height,
+            timestamp=gaze.timestamp,
+            confidence=gaze.confidence,
+        )
+
+    def draw_color_info(self, frame: np.ndarray) -> np.ndarray:
+        """Draw color/note info overlay on frame."""
+        if self.last_reading is None:
+            return frame
+
+        reading = self.last_reading
+        note = reading.note
+        octave = reading.octave
+        color = NOTE_BGR_COLORS.get(note, (128, 128, 128))
+        color_name = NOTE_COLOR_NAMES.get(note, "?")
+
+        x, y, size = 10, 30, 40
+
+        # Draw brightness bar
+        bar_x, bar_y, bar_w, bar_h = 10, 80, 200, 20
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (50, 50, 50), -1)
+        filled_w = int(reading.smoothed_brightness / 255 * bar_w)
+        if filled_w > 0:
+            ratio = reading.smoothed_brightness / 255
+            bar_color = (int(50 + ratio * 50), int(50 + ratio * 200), int(50 + ratio * 200))
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + filled_w, bar_y + bar_h), bar_color, -1)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (200, 200, 200), 1)
+        cv2.putText(frame, f"Brightness: {reading.smoothed_brightness:.0f}", (bar_x + bar_w + 10, bar_y + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        # Draw color square
+        cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
+        cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
+
+        # Note name and octave
+        note_text = f"{note.name}{octave}"
+        cv2.putText(frame, note_text, (x + size + 10, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        # Color name
+        cv2.putText(frame, color_name, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+        # MIDI note
+        cv2.putText(frame, f"MIDI: {reading.midi_note}", (x + size + 80, y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+        return frame
 
     def draw_gaze(self, frame: np.ndarray, frame_index: int) -> np.ndarray:
         """Draw gaze position on frame."""
@@ -175,8 +299,22 @@ class GazeVideoPlayer:
             actual_index, current_frame = result
             self.frame_index = actual_index
 
+            # Color analysis if enabled
+            if self.analyzer is not None:
+                gaze = self.recording.get_gaze_for_frame(self.frame_index)
+                if gaze is not None and gaze.confidence >= self.confidence_threshold:
+                    region = self.extract_region(current_frame, gaze)
+                    if region is not None:
+                        reading = self.analyzer.analyze(region)
+                        self.last_reading = reading
+                        if self.output is not None and self.playing:
+                            self.output.emit(reading)
+
             # Draw overlays
-            display_frame = self.draw_gaze(current_frame.copy(), self.frame_index)
+            display_frame = current_frame.copy()
+            if self.show_overlay:
+                display_frame = self.draw_color_info(display_frame)
+            display_frame = self.draw_gaze(display_frame, self.frame_index)
             display_frame = self.draw_info(display_frame)
 
             if show_help:
@@ -262,6 +400,34 @@ def main() -> None:
         action="store_true",
         help="Start playing automatically",
     )
+    parser.add_argument(
+        "--overlay",
+        action="store_true",
+        help="Show color/note/brightness overlay (useful for debugging)",
+    )
+    parser.add_argument(
+        "--pd",
+        action="store_true",
+        help="Send color-to-music output to Pure Data via FUDI protocol",
+    )
+    parser.add_argument(
+        "--pd-host",
+        type=str,
+        default="127.0.0.1",
+        help="Pure Data host address (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--pd-port",
+        type=int,
+        default=9001,
+        help="Pure Data FUDI port (default: 9001)",
+    )
+    parser.add_argument(
+        "--region-size",
+        type=int,
+        default=50,
+        help="Size of gaze region to analyze (default: 50)",
+    )
 
     args = parser.parse_args()
 
@@ -270,6 +436,19 @@ def main() -> None:
     if not recording_path.exists():
         print(f"Error: Recording not found: {recording_path}")
         sys.exit(1)
+
+    # Initialize color analyzer and output based on flags
+    analyzer = None
+    output = None
+    show_overlay = args.overlay or args.pd
+
+    if show_overlay:
+        analyzer = ColorAnalyzer()
+
+    if args.pd:
+        output = MultiSink()
+        output.add_sink(PureDataFUDISink(host=args.pd_host, port=args.pd_port))
+        print(f"Pure Data output enabled: {args.pd_host}:{args.pd_port}")
 
     # Load and play
     try:
@@ -282,7 +461,13 @@ def main() -> None:
             print(f"  Frames: {info.frame_count}")
             print(f"  Gaze samples: {info.gaze_count}")
 
-            player = GazeVideoPlayer(recording)
+            player = GazeVideoPlayer(
+                recording,
+                analyzer=analyzer,
+                output=output,
+                region_size=args.region_size,
+                show_overlay=show_overlay,
+            )
             player.frame_index = args.start_frame
             player.playing = args.autoplay
             player.run()
@@ -293,6 +478,9 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nInterrupted")
         sys.exit(0)
+    finally:
+        if output is not None:
+            output.close()
 
 
 if __name__ == "__main__":

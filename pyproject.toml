@@ -9,7 +9,6 @@ dependencies = [
     "numpy>=2.4.0",
     "opencv-python>=4.11.0.86",
     "pyzmq>=27.1.0",
-    "python-osc>=1.9.0",
 ]
 
 [project.scripts]

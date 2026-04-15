@@ -32,10 +32,7 @@ uv sync
 # 1. Open Pure Data and load puredata/color_music.pd
 # 2. Turn on DSP in Pure Data (Media → DSP On)
 # 3. Run the tracker:
-uv run pupil-tracker --pd-fudi
-
-# Or use OSC protocol (requires mrpeach external in Pd):
-uv run pupil-tracker --pd-osc
+uv run pupil-tracker --pd
 ```
 
 The color-to-music mapping:
@@ -73,11 +70,7 @@ Open the test grid on your screen and look at each square with the glasses to ve
 Test the Pure Data connection without Pupil hardware:
 
 ```bash
-# Test via FUDI (recommended, no externals needed)
-uv run python scripts/test_puredata.py --fudi
-
-# Test via OSC (requires mrpeach in Pd)
-uv run python scripts/test_puredata.py --osc
+uv run python scripts/test_puredata.py
 ```
 
 ### Test Color Grid Audio
@@ -86,13 +79,13 @@ Play through the entire color-brightness grid systematically:
 
 ```bash
 # Run with Pure Data's color_music.pd open and DSP on
-uv run python scripts/test_color_grid.py --fudi --auto
+uv run python scripts/test_color_grid.py --auto
 
 # Interactive mode (press Enter between tests)
-uv run python scripts/test_color_grid.py --fudi
+uv run python scripts/test_color_grid.py
 
 # Adjust note duration (default 0.8 seconds)
-uv run python scripts/test_color_grid.py --fudi --duration 0.5 --auto
+uv run python scripts/test_color_grid.py --duration 0.5 --auto
 ```
 
 This plays two test sequences:
@@ -105,7 +98,7 @@ This plays two test sequences:
 usage: pupil-tracker [-h] [--host HOST] [--port PORT] [--region-size SIZE]
                      [--smoothing FRAMES] [--no-video] [--verbose]
                      [--note-stability N] [--octave-stability N] [--octave-threshold T]
-                     [--pd-osc] [--pd-fudi] [--pd-host HOST] [--pd-port PORT]
+                     [--pd] [--pd-host HOST] [--pd-port PORT]
 
 Options:
   --host HOST              Pupil Capture host address (default: 127.0.0.1)
@@ -121,10 +114,9 @@ Stability tuning:
   --octave-threshold T     Agreement threshold for octave 0-1 (default: 0.8)
 
 Pure Data output:
-  --pd-osc                 Stream via OSC (requires mrpeach external)
-  --pd-fudi                Stream via FUDI/TCP (no externals needed)
+  --pd                     Send to Pure Data via FUDI protocol (TCP)
   --pd-host HOST           Pure Data host address (default: 127.0.0.1)
-  --pd-port PORT           Pure Data port (default: 9000 for OSC, 9001 for FUDI)
+  --pd-port PORT           Pure Data port (default: 9001)
 ```
 
 ## Architecture
@@ -168,7 +160,6 @@ Pure Data output:
 ┌─────────────────────────────────────────────────────────────┐
 │                    Output Sinks                             │
 │    • ColorConsoleSink: Real-time note/color display         │
-│    • PureDataOSCSink: OSC to Pure Data                      │
 │    • PureDataFUDISink: FUDI/TCP to Pure Data                │
 │                       output.py                             │
 └─────────────────────────────────────────────────────────────┘
@@ -191,12 +182,16 @@ pupil-color-tracker/
 ├── test_images/                # Generated calibration images
 │   ├── color_test_grid.png     # 7x5 color-brightness grid
 │   └── rainbow_strip.png       # Simple color strip
+├── recordings/                 # Pupil Capture recordings for playback
+│   └── 000/                    # Example recording directory
 └── src/pupil_tracker/
     ├── __init__.py
     ├── client.py               # ZMQ client for Pupil Capture
     ├── processor.py            # Frame/gaze processing
     ├── analyzer.py             # Color analysis
-    ├── output.py               # Output sink interfaces
+    ├── output.py               # Output sink interfaces (FUDI)
+    ├── recording.py            # Recording playback support
+    ├── player.py               # Video player with gaze overlay
     └── main.py                 # CLI entry point
 ```
 

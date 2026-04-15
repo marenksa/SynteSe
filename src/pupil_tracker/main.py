@@ -12,7 +12,6 @@ from pupil_tracker.output import (
     ColorConsoleSink,
     MultiSink,
     PureDataFUDISink,
-    PureDataOSCSink,
 )
 from pupil_tracker.processor import FrameProcessor
 
@@ -156,10 +155,9 @@ def run_tracker(
     smoothing: int = 5,
     show_video: bool = True,
     verbose: bool = False,
-    pd_osc: bool = False,
-    pd_fudi: bool = False,
+    pd: bool = False,
     pd_host: str = "127.0.0.1",
-    pd_port: int | None = None,
+    pd_port: int = 9001,
     note_stability: int = 8,
     octave_stability: int = 15,
     octave_threshold: float = 0.8,
@@ -173,10 +171,9 @@ def run_tracker(
         smoothing: Number of frames to average for smoothing.
         show_video: Whether to display the video feed.
         verbose: Whether to print verbose console output.
-        pd_osc: Enable Pure Data output via OSC.
-        pd_fudi: Enable Pure Data output via FUDI.
+        pd: Enable Pure Data output via FUDI protocol.
         pd_host: Pure Data host address.
-        pd_port: Pure Data port (default: 9000 for OSC, 9001 for FUDI).
+        pd_port: Pure Data FUDI port.
         note_stability: Frames for note stability.
         octave_stability: Frames for octave stability.
         octave_threshold: Agreement threshold for octave changes (0-1).
@@ -194,12 +191,8 @@ def run_tracker(
     output = MultiSink()
     output.add_sink(ColorConsoleSink(verbose=verbose))
 
-    if pd_osc:
-        osc_port = pd_port if pd_port else 9000
-        output.add_sink(PureDataOSCSink(host=pd_host, port=osc_port))
-    if pd_fudi:
-        fudi_port = pd_port if pd_port else 9001
-        output.add_sink(PureDataFUDISink(host=pd_host, port=fudi_port))
+    if pd:
+        output.add_sink(PureDataFUDISink(host=pd_host, port=pd_port))
 
     print("=" * 60)
     print("Pupil Color-to-Music Tracker")
@@ -209,10 +202,8 @@ def run_tracker(
     print(f"  Smoothing window: {smoothing} frames")
     print(f"  Video display: {'enabled' if show_video else 'disabled'}")
     print("  Mode: COLOR → MUSIC (wavelength-based note mapping)")
-    if pd_osc:
-        print(f"  Pure Data (OSC): {pd_host}:{pd_port or 9000}")
-    if pd_fudi:
-        print(f"  Pure Data (FUDI): {pd_host}:{pd_port or 9001}")
+    if pd:
+        print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
     print("=" * 60)
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
@@ -334,14 +325,9 @@ def main() -> None:
     # Pure Data output options
     pd_group = parser.add_argument_group("Pure Data output")
     pd_group.add_argument(
-        "--pd-osc",
+        "--pd",
         action="store_true",
-        help="Stream to Pure Data via OSC (requires mrpeach external)",
-    )
-    pd_group.add_argument(
-        "--pd-fudi",
-        action="store_true",
-        help="Stream to Pure Data via FUDI/TCP (no externals needed)",
+        help="Send to Pure Data via FUDI protocol (TCP)",
     )
     pd_group.add_argument(
         "--pd-host",
@@ -352,8 +338,8 @@ def main() -> None:
     pd_group.add_argument(
         "--pd-port",
         type=int,
-        default=None,
-        help="Pure Data port (default: 9000 for OSC, 9001 for FUDI)",
+        default=9001,
+        help="Pure Data FUDI port",
     )
 
     args = parser.parse_args()
@@ -365,8 +351,7 @@ def main() -> None:
         smoothing=args.smoothing,
         show_video=not args.no_video,
         verbose=args.verbose,
-        pd_osc=args.pd_osc,
-        pd_fudi=args.pd_fudi,
+        pd=args.pd,
         pd_host=args.pd_host,
         pd_port=args.pd_port,
         note_stability=args.note_stability,

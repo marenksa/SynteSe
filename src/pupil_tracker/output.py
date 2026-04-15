@@ -3,8 +3,6 @@
 import socket
 from typing import Protocol
 
-from pythonosc import udp_client
-
 from pupil_tracker.analyzer import ColorReading, Note
 
 
@@ -101,54 +99,6 @@ class ColorConsoleSink:
     def close(self) -> None:
         """Print a newline on close to clean up the output."""
         print()
-
-
-class PureDataOSCSink:
-    """Output sink that streams color/note data to Pure Data via OSC.
-
-    Sends MIDI note number for easy frequency conversion using Pd's mtof object.
-    Also sends separate note and octave for flexibility.
-
-    Messages:
-        /midinote <int>: MIDI note number (36-83 for octaves 2-6)
-        /note <int>: Note index (0=C, 1=D, ..., 6=B)
-        /octave <int>: Octave number (2-6)
-        /brightness <float>: Normalized brightness (0-1)
-    """
-
-    def __init__(
-        self,
-        host: str = "127.0.0.1",
-        port: int = 9000,
-    ) -> None:
-        """Initialize the Pure Data OSC sink.
-
-        Args:
-            host: IP address where Pure Data is running.
-            port: UDP port Pure Data is listening on (default 9000).
-        """
-        self._host = host
-        self._port = port
-        self._client = udp_client.SimpleUDPClient(host, port)
-        print(f"[PureData OSC] Sending to {host}:{port}")
-
-    def emit(self, reading: ColorReading) -> None:
-        """Send color reading to Pure Data via OSC.
-
-        Args:
-            reading: The color reading to send.
-        """
-        # Send MIDI note (most useful for synthesis)
-        self._client.send_message("/midinote", reading.midi_note)
-
-        # Send individual components for flexibility
-        self._client.send_message("/note", int(reading.note))
-        self._client.send_message("/octave", reading.octave)
-        self._client.send_message("/brightness", reading.smoothed_brightness / 255.0)
-
-    def close(self) -> None:
-        """Close the sink (UDP is connectionless, nothing to do)."""
-        print("[PureData OSC] Closed")
 
 
 class PureDataFUDISink:

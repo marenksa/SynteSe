@@ -15,14 +15,12 @@ Two test sequences:
    ... through Octave 6
 
 Usage:
-    uv run python scripts/test_color_grid.py --fudi
+    uv run python scripts/test_color_grid.py
 """
 
 import argparse
 import socket
 import time
-
-from pythonosc import udp_client
 
 # Color/Note definitions (matching analyzer.py)
 COLORS = [
@@ -52,7 +50,7 @@ def midi_note(semitone: int, octave: int) -> int:
     return (octave + 1) * 12 + semitone
 
 
-def test_by_rows_fudi(sock: socket.socket, note_duration: float) -> None:
+def test_by_rows(sock: socket.socket, note_duration: float) -> None:
     """Play each color from darkest to brightest."""
     print("\n" + "=" * 60)
     print("TEST 1: BY ROWS (each color across octaves)")
@@ -81,7 +79,7 @@ def test_by_rows_fudi(sock: socket.socket, note_duration: float) -> None:
     print("\n[Rows complete]")
 
 
-def test_by_columns_fudi(sock: socket.socket, note_duration: float) -> None:
+def test_by_columns(sock: socket.socket, note_duration: float) -> None:
     """Play each octave cycling through all colors."""
     print("\n" + "=" * 60)
     print("TEST 2: BY COLUMNS (each octave across colors)")
@@ -109,69 +107,18 @@ def test_by_columns_fudi(sock: socket.socket, note_duration: float) -> None:
     print("\n[Columns complete]")
 
 
-def test_by_rows_osc(client: udp_client.SimpleUDPClient, note_duration: float) -> None:
-    """Play each color from darkest to brightest (OSC version)."""
-    print("\n" + "=" * 60)
-    print("TEST 1: BY ROWS (each color across octaves)")
-    print("=" * 60)
-
-    for color_name, note_name, semitone in COLORS:
-        print(f"\n--- {color_name} ({note_name}) ---")
-
-        for octave in OCTAVES:
-            midi = midi_note(semitone, octave)
-            brightness = OCTAVE_BRIGHTNESS[octave]
-            note_idx = COLORS.index((color_name, note_name, semitone))
-
-            # Send to Pure Data
-            client.send_message("/midinote", midi)
-            client.send_message("/note", note_idx)
-            client.send_message("/octave", octave)
-            client.send_message("/brightness", brightness)
-
-            print(f"  {note_name}{octave} (MIDI {midi:3d}) - Brightness: {brightness:.2f}")
-            time.sleep(note_duration)
-
-    print("\n[Rows complete]")
-
-
-def test_by_columns_osc(client: udp_client.SimpleUDPClient, note_duration: float) -> None:
-    """Play each octave cycling through all colors (OSC version)."""
-    print("\n" + "=" * 60)
-    print("TEST 2: BY COLUMNS (each octave across colors)")
-    print("=" * 60)
-
-    for octave in OCTAVES:
-        brightness = OCTAVE_BRIGHTNESS[octave]
-        print(f"\n--- Octave {octave} (Brightness: {brightness:.2f}) ---")
-
-        for note_idx, (color_name, note_name, semitone) in enumerate(COLORS):
-            midi = midi_note(semitone, octave)
-
-            # Send to Pure Data
-            client.send_message("/midinote", midi)
-            client.send_message("/note", note_idx)
-            client.send_message("/octave", octave)
-            client.send_message("/brightness", brightness)
-
-            print(f"  {note_name}{octave} ({color_name:7}) MIDI {midi:3d}")
-            time.sleep(note_duration)
-
-    print("\n[Columns complete]")
-
-
-def run_fudi_test(host: str, port: int, note_duration: float, auto: bool = False) -> None:
+def run_test(host: str, port: int, note_duration: float, auto: bool = False) -> None:
     """Run tests using FUDI protocol."""
-    print(f"[FUDI] Connecting to {host}:{port}")
-    print("[FUDI] Open 'color_music.pd' in Pure Data")
-    print("[FUDI] Make sure DSP is ON")
+    print(f"Connecting to {host}:{port}")
+    print("Open 'color_music.pd' in Pure Data")
+    print("Make sure DSP is ON")
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((host, port))
-        print("[FUDI] Connected!")
+        print("Connected!")
     except ConnectionRefusedError:
-        print("[FUDI] ERROR: Could not connect. Is Pure Data running with the patch open?")
+        print("ERROR: Could not connect. Is Pure Data running with the patch open?")
         return
 
     try:
@@ -180,47 +127,20 @@ def run_fudi_test(host: str, port: int, note_duration: float, auto: bool = False
             time.sleep(2)
         else:
             input("\nPress Enter to start TEST 1 (by rows)...")
-        test_by_rows_fudi(sock, note_duration)
+        test_by_rows(sock, note_duration)
 
         if auto:
             print("\n[Auto mode] Starting TEST 2 in 3 seconds...")
             time.sleep(3)
         else:
             input("\nPress Enter to start TEST 2 (by columns)...")
-        test_by_columns_fudi(sock, note_duration)
+        test_by_columns(sock, note_duration)
 
         print("\n" + "=" * 60)
         print("ALL TESTS COMPLETE")
         print("=" * 60)
     finally:
         sock.close()
-
-
-def run_osc_test(host: str, port: int, note_duration: float, auto: bool = False) -> None:
-    """Run tests using OSC protocol."""
-    print(f"[OSC] Sending to {host}:{port}")
-    print("[OSC] Open 'color_music.pd' in Pure Data")
-    print("[OSC] Make sure DSP is ON")
-
-    client = udp_client.SimpleUDPClient(host, port)
-
-    if auto:
-        print("\n[Auto mode] Starting TEST 1 in 2 seconds...")
-        time.sleep(2)
-    else:
-        input("\nPress Enter to start TEST 1 (by rows)...")
-    test_by_rows_osc(client, note_duration)
-
-    if auto:
-        print("\n[Auto mode] Starting TEST 2 in 3 seconds...")
-        time.sleep(3)
-    else:
-        input("\nPress Enter to start TEST 2 (by columns)...")
-    test_by_columns_osc(client, note_duration)
-
-    print("\n" + "=" * 60)
-    print("ALL TESTS COMPLETE")
-    print("=" * 60)
 
 
 def main() -> None:
@@ -230,16 +150,6 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--osc",
-        action="store_true",
-        help="Use OSC protocol",
-    )
-    parser.add_argument(
-        "--fudi",
-        action="store_true",
-        help="Use FUDI protocol (recommended)",
-    )
-    parser.add_argument(
         "--host",
         default="127.0.0.1",
         help="Pure Data host (default: 127.0.0.1)",
@@ -247,8 +157,8 @@ def main() -> None:
     parser.add_argument(
         "--port",
         type=int,
-        default=None,
-        help="Port (default: 9000 for OSC, 9001 for FUDI)",
+        default=9001,
+        help="Pure Data FUDI port (default: 9001)",
     )
     parser.add_argument(
         "--duration",
@@ -263,13 +173,6 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-
-    if not args.osc and not args.fudi:
-        print("Please specify --osc or --fudi")
-        print()
-        print("  --fudi : Recommended, use with 'color_music.pd'")
-        print("  --osc  : Alternative, requires mrpeach external")
-        return
 
     print()
     print("Color Grid Test")
@@ -288,12 +191,7 @@ def main() -> None:
     print("    ...etc")
     print()
 
-    if args.osc:
-        port = args.port or 9000
-        run_osc_test(args.host, port, args.duration, args.auto)
-    else:
-        port = args.port or 9001
-        run_fudi_test(args.host, port, args.duration, args.auto)
+    run_test(args.host, args.port, args.duration, args.auto)
 
 
 if __name__ == "__main__":
