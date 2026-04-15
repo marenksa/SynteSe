@@ -22,9 +22,6 @@ from eye_synth.signals.pipeline import Pipeline
 def run_tracker(
     host: str = "127.0.0.1",
     port: int = 50020,
-    region_size: int = 50,
-    smoothing: int = 5,
-    show_video: bool = True,
     verbose: bool = False,
     pd: bool = False,
     pd_host: str = "127.0.0.1",
@@ -33,10 +30,7 @@ def run_tracker(
     patch_name: str = "color_music",
 ) -> None:
     """Run the color-to-music tracker."""
-    pipeline = Pipeline(
-        region_size=region_size,
-        smoothing=smoothing,
-    )
+    pipeline = Pipeline()
     gamma_lut = build_gamma_lut(gamma)
 
     pd_sink: PureDataSink | None = PureDataSink(host=pd_host, port=pd_port) if pd else None
@@ -57,9 +51,6 @@ def run_tracker(
     print("Pupil Color-to-Music Tracker")
     print("=" * 60)
     print(f"  Host: {host}:{port}")
-    print(f"  Region size: {region_size}px")
-    print(f"  Smoothing window: {smoothing} frames")
-    print(f"  Video display: {'enabled' if show_video else 'disabled'}")
     print(f"  Patch: {patch_name}")
     if pd:
         print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
@@ -104,7 +95,7 @@ def run_tracker(
                     console_output.emit(pipeline.last_color_reading)
 
                 # Draw overlay
-                if show_video and message.frame is not None:
+                if message.frame is not None:
                     display = (
                         frame_data if frame_data is not None else message.frame.data
                     ).copy()
@@ -154,8 +145,7 @@ def run_tracker(
             pd_sink.send("confidence", 1.0)
             pd_sink.send("am_lfo", 0)
             pd_sink.close()
-        if show_video:
-            cv2.destroyAllWindows()
+        cv2.destroyAllWindows()
 
     print("[INFO] Tracker stopped.")
 
@@ -168,11 +158,6 @@ def main() -> None:
     )
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=50020)
-    parser.add_argument("--region-size", type=int, default=50,
-                        help="Size of the gaze region to analyze (pixels)")
-    parser.add_argument("--smoothing", type=int, default=3,
-                        help="Number of frames to average for smoothing")
-    parser.add_argument("--no-video", action="store_true", help="Disable video display")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--gamma", type=float, default=1.0,
                         help="Gamma correction (< 1.0 brightens, > 1.0 darkens)")
@@ -190,9 +175,6 @@ def main() -> None:
     run_tracker(
         host=args.host,
         port=args.port,
-        region_size=args.region_size,
-        smoothing=args.smoothing,
-        show_video=not args.no_video,
         verbose=args.verbose,
         pd=args.pd,
         pd_host=args.pd_host,

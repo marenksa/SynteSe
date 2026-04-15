@@ -332,17 +332,15 @@ def main() -> None:
         description="Video player with gaze overlay for Pupil Capture recordings"
     )
     parser.add_argument("recording_path", type=str)
-    parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--autoplay", action="store_true")
-    parser.add_argument("--overlay", action="store_true",
-                        help="Show color/note/brightness overlay")
+    parser.add_argument("--no-overlay", action="store_true",
+                        help="Disable colour/brightness overlay")
     parser.add_argument("--patch", type=str, default="color_music",
                         help="Patch to use for mapping signals to outputs")
     parser.add_argument("--pd", action="store_true",
                         help="Send output to Pure Data via FUDI protocol")
     parser.add_argument("--pd-host", type=str, default="127.0.0.1")
     parser.add_argument("--pd-port", type=int, default=9001)
-    parser.add_argument("--region-size", type=int, default=50)
     parser.add_argument("--gamma", type=float, default=1.0,
                         help="Gamma correction (< 1.0 brightens)")
 
@@ -353,8 +351,8 @@ def main() -> None:
         print(f"Error: Recording not found: {recording_path}")
         sys.exit(1)
 
-    show_overlay = args.overlay or args.pd
-    pipeline = Pipeline(region_size=args.region_size) if show_overlay else None
+    show_overlay = not args.no_overlay
+    pipeline = Pipeline() if show_overlay or args.pd else None
     pd_sink = None
     if args.pd:
         pd_sink = PureDataSink(host=args.pd_host, port=args.pd_port)
@@ -378,11 +376,9 @@ def main() -> None:
                 pipeline=pipeline,
                 pd_sink=pd_sink,
                 patch=patch,
-                region_size=args.region_size,
                 show_overlay=show_overlay,
                 gamma=args.gamma,
             )
-            player.frame_index = args.start_frame
             player.playing = args.autoplay
             player.run()
 

@@ -14,7 +14,8 @@ This means experimenting with a new musical idea means writing a new patch, not 
 ## Prerequisites
 
 1. **Pupil Core** hardware connected via USB
-2. **Pupil Capture** running with **Frame Publisher plugin** enabled
+2. **Pupil Capture** running with administrator privileges and **Frame Publisher plugin** enabled
+   - Run Pupil Capture as admin (required for USB camera access on some systems)
    - Plugin Manager → Enable "Frame Publisher"
 3. **Pure Data** for sound synthesis
 
@@ -101,7 +102,7 @@ class SceneMotionPatch:
             outputs.send("hit", signals.env.scene_change)
 
         if signals.eye.blink is not None:
-            from pupil_tracker.signals.eye_blinks import BlinkType
+            from eye_synth.signals.eye_blinks import BlinkType
             if signals.eye.blink.blink_type == BlinkType.INTENTIONAL:
                 outputs.send("freeze", 1)
 
@@ -110,7 +111,7 @@ class SceneMotionPatch:
         pass
 ```
 
-Then register it in `patches/__init__.py`:
+Then register it in `patches/base.py`:
 
 ```python
 def load_patch(name: str) -> Patch:
@@ -168,7 +169,7 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
     ├── signals/
     │   ├── bus.py                  # SignalBus, OutputBus
     │   ├── pipeline.py             # Pipeline: owns detectors, populates SignalBus
-    │   ├── env_color.py            # Colour analysis, NoteGate (hue→note, brightness→octave)
+    │   ├── env_color.py            # Colour analysis (raw HSV extraction)
     │   ├── env_scene_change.py     # Full-frame change detection
     │   ├── eye_blinks.py           # Blink/flutter detection, types, constants
     │   └── eye_gaze.py             # Gaze velocity
@@ -176,9 +177,11 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
     │   ├── sinks.py                # PureDataSink, ColorConsoleSink, MultiSink
     │   └── overlay.py              # Stateless drawing functions
     └── patches/
-        ├── __init__.py             # Patch protocol + load_patch()
+        ├── base.py                 # Patch protocol + load_patch()
         └── color_music/            # Prototype: colour→MIDI note
-            ├── __init__.py
+            ├── mapping.py          # Note, NoteMapper, hue/brightness constants
+            ├── gate.py             # NoteGate
+            ├── patch.py            # ColorMusicPatch
             └── README.md
 ```
 
@@ -189,32 +192,24 @@ Controls: Space (play/pause), ←/→ (frame step), `[`/`]` (speed), 0–9 (jump
 ```
 --host HOST              Pupil Capture host (default: 127.0.0.1)
 --port PORT              Pupil Capture port (default: 50020)
---region-size N          Gaze region size in pixels (default: 50)
---smoothing N            Frames to average for smoothing (default: 3)
---no-video               Disable video display
 --verbose, -v            Verbose console output
 --gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
 --patch NAME             Patch to use (default: color_music)
-
-Stability tuning:
-  Pure Data output:
-  --pd                     Send to Pure Data via FUDI/TCP
-  --pd-host HOST           Pure Data host (default: 127.0.0.1)
-  --pd-port PORT           Pure Data port (default: 9001)
+--pd                     Send to Pure Data via FUDI/TCP
+--pd-host HOST           Pure Data host (default: 127.0.0.1)
+--pd-port PORT           Pure Data port (default: 9001)
 ```
 
 ### `pupil-player`
 
 ```
 recording_path           Path to Pupil Capture recording directory
---start-frame N          Starting frame (default: 0)
 --autoplay               Start playing immediately
---overlay                Show colour/note/brightness overlay
+--no-overlay             Disable colour/brightness overlay
 --patch NAME             Patch to use (default: color_music)
 --pd                     Send to Pure Data
 --pd-host HOST           Pure Data host
 --pd-port PORT           Pure Data port
---region-size N          Gaze region size
 --gamma FLOAT            Gamma correction
 ```
 
