@@ -17,7 +17,7 @@ from pupil_tracker.output import MultiSink, PureDataSink
 from pupil_tracker.recording import Recording
 
 if TYPE_CHECKING:
-    from pupil_tracker.recording import EyeClosureEvent, GazeSample
+    from pupil_tracker.recording import EyeClosureEvent, FlutterEvent, GazeSample
 
 
 # BGR colors for each note (matching the hue ranges)
@@ -103,6 +103,9 @@ class GazeVideoPlayer:
         self._closure_flash_until = 0.0
         self._last_closure: "EyeClosureEvent | None" = None
 
+        # Flutter display state
+        self._flutter_flash_until = 0.0
+        self._last_flutter: "FlutterEvent | None" = None
 
     def _build_gamma_lut(self, gamma: float) -> np.ndarray:
         """Build a lookup table for gamma correction.
@@ -309,6 +312,25 @@ class GazeVideoPlayer:
             cv2.putText(frame, f"New: {new_count}", (x_offset, text_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
+        # Check for flutter
+        flutter = self.recording.get_flutter_at_timestamp(world_ts)
+        if flutter is not None:
+            self._flutter_flash_until = world_ts + 0.2
+            self._last_flutter = flutter
+
+        is_flutter = world_ts < self._flutter_flash_until
+
+        text_y += 22
+        if is_flutter and self._last_flutter is not None:
+            f = self._last_flutter
+            label = f"FLUTTER {f.crossing_rate:.1f}/s"
+            cv2.putText(frame, label, (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        else:
+            flutter_count = len(self.recording.flutter_data)
+            cv2.putText(frame, f"Flutter: {flutter_count}", (x_offset, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
         return frame
 
     def draw_info(self, frame: np.ndarray) -> np.ndarray:
@@ -404,7 +426,7 @@ class GazeVideoPlayer:
         print(f"Fixations: {len(self.recording.fixation_data)}")
         print(f"Blinks (old): {len(self.recording.blink_data)}")
         print(f"Eye closures (new): {len(self.recording.eye_closure_data)}")
-
+        print(f"Flutter events: {len(self.recording.flutter_data)}")
         if self.recording.eye_video is not None:
             print(f"Eye camera: available")
         print("\nPress 'H' for keyboard controls, 'Q' to quit\n")
@@ -423,6 +445,7 @@ class GazeVideoPlayer:
                 # Reset flash timers so stale indicators don't persist after seek/loop
                 self._blink_flash_until = 0.0
                 self._closure_flash_until = 0.0
+                self._flutter_flash_until = 0.0
 
             result = self.recording.read_next_frame()
             if result is None:

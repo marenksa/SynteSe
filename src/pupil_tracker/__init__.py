@@ -21,6 +21,7 @@ from pupil_tracker.recording import (
     EyeClosureEvent,
     EyeClosureType,
     FixationSample,
+    FlutterEvent,
     GazeSample,
     Recording,
     RecordingInfo,
@@ -57,4 +58,5 @@ __all__ = [
     "FixationSample",
     "EyeClosureEvent",
     "EyeClosureType",
+    "FlutterEvent",
 ]
