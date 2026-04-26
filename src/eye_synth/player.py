@@ -201,9 +201,6 @@ class GazeVideoPlayer:
                     gaze_px=gaze_px,
                     min_confidence=self.confidence_threshold,
                 )
-                signals.eye.total_blinks = len(self.recording.blink_data)
-                signals.eye.total_flutters = len(self.recording.flutter_data)
-
                 if signals.has_env_reading and self.pipeline.last_color_reading is not None:
                     self._last_color_reading = self.pipeline.last_color_reading
                     if self.output is not None:

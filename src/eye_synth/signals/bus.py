@@ -14,20 +14,17 @@ class EyeSignals:
     # Gaze
     confidence: float = 0.0
     norm_pos: tuple[float, float] = (0.5, 0.5)   # 0.0–1.0, Pupil convention
-    px_pos: tuple[int, int] = (0, 0)              # pixel coords in world frame
-    velocity_px_s: float = 0.0                    # gaze speed in pixels/second
+    velocity: float = 0.0                    # gaze speed in pixels/second
 
     # Blink state
     is_eyes_closed: bool = False                  # between onset and offset
     eyes_closed_elapsed_ms: float = 0.0           # ms since most recent onset (resets per blink)
     blink: BlinkSample | None = None              # non-None for 1 iteration when a blink completes
-    total_blinks: int = 0
 
     # Flutter state
     is_flutter_active: bool = False
     flutter_blink_count: int = 0                  # blinks accumulated during active burst
     flutter: FlutterEvent | None = None           # non-None for 1 iteration when flutter ends
-    total_flutters: int = 0
 
     # Fixation
     fixation_id: int | None = None                # non-None for 1 iteration on new fixation
@@ -40,10 +37,8 @@ class EnvSignals:
     # Color at gaze point
     hue: float = 0.0               # OpenCV 0–179 (temporally smoothed)
     raw_hue: float | None = None   # instantaneous hue (pre-smoothing); None if saturation too low
-    hue_normalized: float = 0.0   # 0.0–1.0
     saturation: float = 0.0       # 0–255
     brightness: float = 0.0       # 0–255
-    brightness_normalized: float = 0.0  # 0.0–1.0
 
     # Change signals
     scene_change: float = 0.0     # full-frame change magnitude 0.0–1.0
@@ -56,8 +51,6 @@ class SignalBus:
     eye: EyeSignals = field(default_factory=EyeSignals)
     env: EnvSignals = field(default_factory=EnvSignals)
     timestamp: float = 0.0
-    frame_width: int = 0
-    frame_height: int = 0
     has_env_reading: bool = False  # True when env signals were freshly updated this iteration
 
     def clear_events(self) -> None:

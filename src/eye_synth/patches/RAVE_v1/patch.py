@@ -76,9 +76,9 @@ class RAVEPatch:
 
         outputs.send("x",      _norm_to_latent(eye.norm_pos[0]))
         outputs.send("y",      _norm_to_latent(eye.norm_pos[1]))  # Pupil: 0=bottom, 1=top
-        outputs.send("hue",    _norm_to_latent(env.hue_normalized))
-        outputs.send("bright", _norm_to_latent(env.brightness_normalized))
-        outputs.send("vel",    _vel_to_latent(eye.velocity_px_s))
+        outputs.send("hue",    _norm_to_latent(env.hue / 179.0))
+        outputs.send("bright", _norm_to_latent(env.brightness / 255.0))
+        outputs.send("vel",    _vel_to_latent(eye.velocity))
         outputs.send("conf",   _norm_to_latent(eye.confidence))
 
         # Event booleans

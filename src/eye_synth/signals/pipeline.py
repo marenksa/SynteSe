@@ -107,9 +107,6 @@ class Pipeline:
         s.eye.eyes_closed_elapsed_ms = self.blink_tracker.eyes_closed_elapsed_ms
         s.eye.is_flutter_active = self.blink_tracker.is_flutter_active
         s.eye.flutter_blink_count = self.blink_tracker.active_flutter_blink_count
-        s.eye.total_blinks = self.blink_tracker.blink_count
-        s.eye.total_flutters = self.blink_tracker.flutter_count
-
         if message.frame is not None:
             actual_data = frame_data if frame_data is not None else message.frame.data
 
@@ -125,8 +122,6 @@ class Pipeline:
             else:
                 self.processor.update_frame(message.frame)
 
-            s.frame_width = message.frame.width
-            s.frame_height = message.frame.height
             s.env.scene_change = self.scene_detector.update(actual_data)
 
             gaze_region = self.processor.extract_region()
@@ -134,7 +129,6 @@ class Pipeline:
                 color_reading = self.analyzer.analyze(gaze_region)
                 self.last_color_reading = color_reading
                 self._populate_env(color_reading)
-                s.eye.px_pos = (gaze_region.center_x, gaze_region.center_y)
                 if self.processor.last_gaze is not None:
                     self.gaze_vel.update(
                         self.processor.last_gaze.norm_pos,
@@ -142,7 +136,7 @@ class Pipeline:
                         message.frame.width,
                         message.frame.height,
                     )
-                    s.eye.velocity_px_s = self.gaze_vel.velocity
+                    s.eye.velocity = self.gaze_vel.velocity
 
         return s
 
@@ -182,18 +176,15 @@ class Pipeline:
         s.clear_events()
         s.timestamp = timestamp
         height, width = frame.shape[:2]
-        s.frame_width = width
-        s.frame_height = height
 
         if gaze is not None:
             s.eye.confidence = gaze.confidence
             s.eye.norm_pos = gaze.norm_pos
 
         if gaze_px is not None:
-            s.eye.px_pos = gaze_px
             if gaze is not None:
                 self.gaze_vel.update(gaze.norm_pos, gaze.timestamp, width, height)
-            s.eye.velocity_px_s = self.gaze_vel.velocity
+            s.eye.velocity = self.gaze_vel.velocity
 
         if blink is not None:
             s.eye.blink = blink
@@ -255,10 +246,8 @@ class Pipeline:
         s = self.signals
         s.env.hue = cr.smoothed_hue
         s.env.raw_hue = cr.hue
-        s.env.hue_normalized = cr.smoothed_hue / 179.0
         s.env.saturation = cr.saturation
         s.env.brightness = cr.smoothed_brightness
-        s.env.brightness_normalized = cr.smoothed_brightness / 255.0
         s.has_env_reading = True
 
     def _crop_region(

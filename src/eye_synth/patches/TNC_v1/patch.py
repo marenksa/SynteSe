@@ -71,4 +71,4 @@ class ColorMusicPatch:
         if not signals.eye.is_flutter_active and self._note_gate.update(
             note.midi_note, note.raw_midi_note
         ):
-            outputs.send("note_on", note.midi_note, signals.env.brightness_normalized)
+            outputs.send("note_on", note.midi_note, signals.env.brightness / 255.0)
