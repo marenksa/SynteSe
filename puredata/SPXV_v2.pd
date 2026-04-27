@@ -1,0 +1,18 @@
+#N canvas 34 66 800 600 12;
+#X text 70 26 ========== GAZE + VELOCITY → PITCH / LOUDNESS (inverted) ==========;
+#X text 70 50 Streams raw gaze coordinates and velocity from Python every frame., f 75;
+#X text 70 70 gaze_x: 0-1 (left→right);
+#X text 70 90 gaze_y: 0-1 (bottom→top  Pupil convention);
+#X text 70 110 velocity: gaze speed in px/s;
+#X obj 100 190 netreceive 9001;
+#X text 225 190 <- TCP port 9001 (FUDI format);
+#X obj 100 220 route gaze_x gaze_y velocity;
+#X floatatom 100 260 8 0 1 1 gaze_x - - 0;
+#X floatatom 220 260 8 0 1 1 gaze_y - - 0;
+#X floatatom 340 260 8 0 0 0 velocity - - 0;
+#X text 100 300 --- pitch mapping (inverted) goes here ---;
+#X text 100 320 --- loudness mapping (inverted) goes here ---;
+#X connect 5 0 7 0;
+#X connect 7 0 8 0;
+#X connect 7 1 9 0;
+#X connect 7 2 10 0;

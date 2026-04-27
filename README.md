@@ -207,7 +207,7 @@ Patches are named `{Control}{Target}{Source}_v{N}`, where each token describes w
 | **Control** | Toggle | `Tg` |
 | **Control** | Stream | `S` |
 | **Target** | Note | `N` |
-| **Target** | Sample | `S` |
+| **Target** | Pitch | `P` |
 | **Target** | Sequence | `Sq` |
 | **Target** | Effect | `E` |
 | **Source** | Color | `C` |
