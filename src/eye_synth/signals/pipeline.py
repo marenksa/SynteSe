@@ -22,6 +22,7 @@ from eye_synth.signals.env_color import ColorAnalyzer, ColorReading, FrameProces
 from eye_synth.signals.env_scene_change import SceneChangeDetector
 from eye_synth.signals.eye_blinks import FlutterEvent, StreamingBlinkTracker
 from eye_synth.signals.eye_gaze import GazeVelocityTracker
+from eye_synth.signals.head_gaze_state import HeadGazeClassifier
 
 if TYPE_CHECKING:
     from eye_synth.input.live import Message
@@ -49,6 +50,7 @@ class Pipeline:
         self.analyzer = ColorAnalyzer(smoothing_window=smoothing)
         self.scene_detector = SceneChangeDetector()
         self.gaze_vel = GazeVelocityTracker()
+        self.head_gaze = HeadGazeClassifier()
 
         # Live-only detectors (unused in recording path)
         self.blink_tracker = StreamingBlinkTracker()
@@ -123,6 +125,9 @@ class Pipeline:
                 self.processor.update_frame(message.frame)
 
             s.env.scene_change = self.scene_detector.update(actual_data)
+            s.head_gaze_state = self.head_gaze.update(
+                s.eye.norm_pos, s.env.scene_change, s.eye.confidence
+            )
 
             gaze_region = self.processor.extract_region()
             if gaze_region is not None:
@@ -203,6 +208,11 @@ class Pipeline:
         self._prev_in_flutter = in_flutter
 
         s.env.scene_change = self.scene_detector.update(frame)
+        s.head_gaze_state = self.head_gaze.update(
+            s.eye.norm_pos,
+            s.env.scene_change,
+            s.eye.confidence,
+        )
 
         confidence_ok = gaze is None or gaze.confidence >= min_confidence
         if gaze_px is not None and confidence_ok:
@@ -232,6 +242,7 @@ class Pipeline:
         self.scene_detector.reset()
         self.gaze_vel.reset()
         self.analyzer.reset()
+        self.head_gaze.reset()
         self.blink_tracker = StreamingBlinkTracker()
         self.processor = FrameProcessor(region_size=self.region_size)
         self._prev_in_flutter = False

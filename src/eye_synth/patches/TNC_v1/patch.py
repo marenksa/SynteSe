@@ -63,15 +63,10 @@ class ColorMusicPatch:
             signals.env.brightness,
         )
 
-        # Feed fixation events to the note gate
-        if signals.eye.fixation_id is not None:
-            self._note_gate.new_fixation(signals.eye.fixation_id)
-
         # Content-based note trigger (suppressed during flutter)
         if not signals.eye.is_flutter_active and self._note_gate.update(
             note.midi_note,
             note.raw_midi_note,
-            norm_pos=signals.eye.norm_pos,
-            scene_change=signals.env.scene_change,
+            head_gaze_state=signals.head_gaze_state,
         ):
             outputs.send("note_on", note.midi_note, signals.env.brightness / 255.0)

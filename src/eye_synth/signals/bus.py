@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from eye_synth.signals.eye_blinks import BlinkSample, FlutterEvent
+from eye_synth.signals.head_gaze_state import HeadGazeState
 
 
 @dataclass
@@ -50,6 +51,7 @@ class SignalBus:
 
     eye: EyeSignals = field(default_factory=EyeSignals)
     env: EnvSignals = field(default_factory=EnvSignals)
+    head_gaze_state: HeadGazeState = HeadGazeState.Rest
     timestamp: float = 0.0
     has_env_reading: bool = False  # True when env signals were freshly updated this iteration
 
