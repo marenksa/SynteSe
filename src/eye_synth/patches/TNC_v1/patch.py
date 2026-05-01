@@ -69,6 +69,9 @@ class ColorMusicPatch:
 
         # Content-based note trigger (suppressed during flutter)
         if not signals.eye.is_flutter_active and self._note_gate.update(
-            note.midi_note, note.raw_midi_note
+            note.midi_note,
+            note.raw_midi_note,
+            norm_pos=signals.eye.norm_pos,
+            scene_change=signals.env.scene_change,
         ):
             outputs.send("note_on", note.midi_note, signals.env.brightness / 255.0)
