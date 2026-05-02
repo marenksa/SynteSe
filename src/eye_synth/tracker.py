@@ -9,8 +9,7 @@ import numpy as np
 
 from eye_synth.input.live import PupilCaptureClient
 from eye_synth.output import (
-    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink,
-    apply_gamma, build_gamma_lut, draw_overlay,
+    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink, draw_overlay,
 )
 from eye_synth.patches import load_patch
 from eye_synth.signals.bus import OutputBus
@@ -23,13 +22,11 @@ def run_tracker(
     verbose: bool = False,
     pd_host: str = "127.0.0.1",
     pd_port: int = 9001,
-    gamma: float = 1.0,
     patch_name: str = "TNC_v1",
     show_overlay: bool = True,
 ) -> None:
     """Run the live tracker."""
     pipeline = Pipeline()
-    gamma_lut = build_gamma_lut(gamma)
 
     pd_sink = PureDataSink(host=pd_host, port=pd_port)
     outputs = OutputBus(pd_sink)
@@ -52,8 +49,6 @@ def run_tracker(
     print(f"  Host: {host}:{port}")
     print(f"  Patch: {patch_name}")
     print(f"  Pure Data (FUDI): {pd_host}:{pd_port}")
-    if gamma != 1.0:
-        print(f"  Gamma correction: {gamma}")
     print("=" * 60)
     print("Press 'q' in the video window or Ctrl+C to stop.")
     print()
@@ -63,12 +58,7 @@ def run_tracker(
             for message in client.stream_realtime():
                 now = time.monotonic()
 
-                # Apply gamma before passing to pipeline and display
-                frame_data = None
-                if message.frame is not None and gamma != 1.0:
-                    frame_data = apply_gamma(message.frame.data, gamma_lut)
-
-                signals = pipeline.process_live(message, now, frame_data=frame_data)
+                signals = pipeline.process_live(message, now)
 
                 # Update display flash state from signals
                 if signals.eye.blink is not None:
@@ -94,9 +84,7 @@ def run_tracker(
 
                 # Draw overlay
                 if message.frame is not None:
-                    display = (
-                        frame_data if frame_data is not None else message.frame.data
-                    ).copy()
+                    display = message.frame.data.copy()
 
                     if show_overlay:
                         gaze_px = None
@@ -158,8 +146,6 @@ def main() -> None:
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=50020)
     parser.add_argument("--verbose", "-v", action="store_true")
-    parser.add_argument("--gamma", type=float, default=1.0,
-                        help="Gamma correction (< 1.0 brightens, > 1.0 darkens)")
     parser.add_argument("--patch", type=str, default="TNC_v1",
                         help="Patch to use for mapping signals to outputs")
 
@@ -178,7 +164,6 @@ def main() -> None:
         verbose=args.verbose,
         pd_host=args.pd_host,
         pd_port=args.pd_port,
-        gamma=args.gamma,
         patch_name=args.patch,
         show_overlay=not args.no_overlay,
     )

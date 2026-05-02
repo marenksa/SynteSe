@@ -12,8 +12,7 @@ import numpy as np
 
 from eye_synth.input.recording import Recording
 from eye_synth.output import (
-    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink,
-    apply_gamma, build_gamma_lut, draw_overlay,
+    ColorConsoleSink, DEFAULT_OVERLAY, MultiSink, PureDataSink, draw_overlay,
 )
 from eye_synth.patches import Patch, load_patch
 from eye_synth.signals.bus import OutputBus
@@ -33,19 +32,15 @@ class GazeVideoPlayer:
         patch: Patch | None = None,
         region_size: int = 50,
         show_overlay: bool = False,
-        gamma: float = 1.0,
     ):
         self.recording = recording
         self.pipeline = pipeline
         self.output = output
         self.region_size = region_size
         self.show_overlay = show_overlay
-        self.gamma = gamma
         self.frame_index = 0
         self.playing = False
         self.playback_speed = 1.0
-
-        self._gamma_lut = build_gamma_lut(gamma)
 
         # Display settings
         self.gaze_radius = 20
@@ -67,11 +62,6 @@ class GazeVideoPlayer:
         self._last_blink_label: str | None = None
         self._flutter_flash_until = 0.0
         self._last_flutter_event = None
-
-    def apply_gamma(self, frame: np.ndarray) -> np.ndarray:
-        if self.gamma == 1.0:
-            return frame
-        return apply_gamma(frame, self._gamma_lut)
 
     def draw_info(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]
@@ -180,7 +170,6 @@ class GazeVideoPlayer:
 
             actual_index, current_frame = result
             self.frame_index = actual_index
-            current_frame = self.apply_gamma(current_frame)
 
             # --- Analysis and patch dispatch (only when playing) ---
             if self.pipeline is not None and self.playing:
@@ -326,9 +315,6 @@ def main() -> None:
                         help="Pure Data host (default: 127.0.0.1)")
     parser.add_argument("--pd-port", type=int, default=9001,
                         help="Pure Data port (default: 9001)")
-    parser.add_argument("--gamma", type=float, default=1.0,
-                        help="Gamma correction (< 1.0 brightens)")
-
     args = parser.parse_args()
 
     recording_path = Path(args.recording_path)
@@ -355,8 +341,6 @@ def main() -> None:
             print(f"  Duration: {info.duration_s:.1f}s  Frames: {info.frame_count}")
             print(f"  Resolution: {info.world_resolution[0]}x{info.world_resolution[1]}")
             print(f"  Gaze: {info.gaze_count}  Fixations: {info.fixation_count}  Blinks: {info.blink_count}")
-            if args.gamma != 1.0:
-                print(f"  Gamma: {args.gamma}")
             print(f"  Patch: {args.patch}")
 
             player = GazeVideoPlayer(
@@ -366,7 +350,6 @@ def main() -> None:
                 outputs=outputs,
                 patch=patch,
                 show_overlay=show_overlay,
-                gamma=args.gamma,
             )
             player.run()
 

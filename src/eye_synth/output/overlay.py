@@ -220,13 +220,3 @@ def draw_overlay(
         )
 
 
-def build_gamma_lut(gamma: float) -> np.ndarray:
-    if gamma == 1.0:
-        return np.arange(256, dtype=np.uint8)
-    return np.array(
-        [((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8
-    )
-
-
-def apply_gamma(frame: np.ndarray, lut: np.ndarray) -> np.ndarray:
-    return cv2.LUT(frame, lut)

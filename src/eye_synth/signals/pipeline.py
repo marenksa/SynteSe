@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from eye_synth.input.live import FrameData
 from eye_synth.signals.bus import SignalBus
 from eye_synth.signals.env_color import ColorAnalyzer, ColorReading, FrameProcessor, GazeRegion
 from eye_synth.signals.env_scene_change import SceneChangeDetector
@@ -71,14 +70,12 @@ class Pipeline:
         self,
         message: Message,
         now: float,
-        frame_data: NDArray[np.uint8] | None = None,
     ) -> SignalBus:
         """Process one ZMQ message from Pupil Capture.
 
         Args:
             message:    Message yielded by PupilCaptureClient.stream_realtime().
             now:        Current time from time.monotonic().
-            frame_data: Gamma-corrected frame array. If None, message.frame.data is used as-is.
 
         Returns:
             The updated SignalBus (same object each call).
@@ -110,21 +107,8 @@ class Pipeline:
         s.eye.is_flutter_active = self.blink_tracker.is_flutter_active
         s.eye.flutter_blink_count = self.blink_tracker.active_flutter_blink_count
         if message.frame is not None:
-            actual_data = frame_data if frame_data is not None else message.frame.data
-
-            if frame_data is not None:
-                corrected = FrameData(
-                    timestamp=message.frame.timestamp,
-                    width=message.frame.width,
-                    height=message.frame.height,
-                    data=frame_data,
-                    topic=message.frame.topic,
-                )
-                self.processor.update_frame(corrected)
-            else:
-                self.processor.update_frame(message.frame)
-
-            s.env.scene_change = self.scene_detector.update(actual_data)
+            self.processor.update_frame(message.frame)
+            s.env.scene_change = self.scene_detector.update(message.frame.data)
             s.head_gaze_state = self.head_gaze.update(
                 s.eye.norm_pos, s.env.scene_change, s.eye.confidence
             )
@@ -163,7 +147,7 @@ class Pipeline:
         """Process one frame from a recording.
 
         Args:
-            frame:          BGR frame array (already gamma-corrected if needed).
+            frame:          BGR frame array.
             gaze:           Gaze sample for this frame, or None.
             blink:          Blink event at this timestamp, or None.
             flutter:        Flutter event at this timestamp, or None.
