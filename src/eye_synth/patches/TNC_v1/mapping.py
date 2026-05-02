@@ -140,10 +140,11 @@ class NoteMapper:
         return self._current_note
 
     def _brightness_to_octave(self, brightness: float) -> int:
+        # _MIN_OCTAVE=2 gives a 4-step range so octave 3 covers half the
+        # brightness (0–127); octave 2 is clamped out — too low to use.
         octave_range = self._MAX_OCTAVE - self._MIN_OCTAVE
         octave = self._MIN_OCTAVE + int(brightness / 255 * octave_range)
-        octave = min(max(octave, self._MIN_OCTAVE), self._MAX_OCTAVE)
-        return 3 if octave == self._MIN_OCTAVE else octave
+        return max(3, min(octave, self._MAX_OCTAVE))
 
     def _get_stable_octave(self, raw_octave: int) -> int:
         self._octave_history.append(raw_octave)

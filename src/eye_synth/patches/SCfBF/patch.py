@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from eye_synth.output.overlay import OverlayConfig
 from eye_synth.signals.bus import OutputBus, SignalBus
-
-INTENTIONAL_MS = 600  # ms eyes must be closed to count as intentional
+from eye_synth.signals.eye_blinks import INTENTIONAL_GESTURE_MS
 
 
 class ConfidenceStreamPatch:
@@ -16,7 +15,7 @@ class ConfidenceStreamPatch:
 
     Messages sent on change only:
         flutter <0|1>      —  1 while a flutter burst is active
-        intentional <0|1>  —  1 while eyes have been closed >= INTENTIONAL_MS
+        intentional <0|1>  —  1 while eyes have been closed >= INTENTIONAL_GESTURE_MS
         blink <0|1>        —  1 while eyes are closed
     """
 
@@ -44,7 +43,7 @@ class ConfidenceStreamPatch:
 
     def update(self, signals: SignalBus, outputs: OutputBus) -> None:
         if signals.eye.is_eyes_closed and not signals.eye.is_flutter_active:
-            is_intentional = int(signals.eye.eyes_closed_elapsed_ms >= INTENTIONAL_MS)
+            is_intentional = int(signals.eye.eyes_closed_elapsed_ms >= INTENTIONAL_GESTURE_MS)
         else:
             is_intentional = 0
 

@@ -19,8 +19,9 @@ from enum import Enum
 
 # --- Thresholds ---
 
-BLINK_MAX_MS = 400        # Blinks shorter than this are normal blinks
-INTENTIONAL_MIN_MS = 500  # Blinks longer than this are intentional closures
+BLINK_MAX_MS = 400           # Blinks shorter than this are normal blinks
+INTENTIONAL_MIN_MS = 500     # Blinks longer than this are intentional closures
+INTENTIONAL_GESTURE_MS = 600 # Eyes closed this long = intentional closure gesture
 FLUTTER_WINDOW_S = 1.5    # Sliding window for flutter detection
 FLUTTER_MIN_BLINKS = 3    # Minimum blinks in window to qualify as flutter
 FLUTTER_END_TIMEOUT_S = 0.3  # Flutter ends when no new blink arrives within this time

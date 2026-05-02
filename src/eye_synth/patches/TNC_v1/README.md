@@ -49,45 +49,23 @@ effect <0–1>                  →  sets effect intensity (0 = off)
 To use:
 1. Open `puredata/TNC_v1.pd` in Pure Data
 2. Enable DSP (Media → DSP On)
-3. Run the tracker with `--pd`
+3. Run the tracker (it connects to PD automatically)
 
 ## Running
 
 ```bash
-# Live tracking
-uv run pupil-tracker --pd
+# Live tracking (TNC_v1 is the default patch)
+uv run pupil-tracker
 
 # Playback
-uv run gaze-player recordings/000 --pd
+uv run pupil-player recordings/000
 
-# This patch is the default, but can be explicit:
-uv run pupil-tracker --patch TNC_v1 --pd
-```
-
-## Stability Tuning
-
-The colour analyser applies temporal smoothing and stability hysteresis before emitting note values. These are tunable:
-
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `--smoothing` | 3 | Frames averaged for colour smoothing. Higher = more stable but slower. |
-| `--note-stability` | 2 | Consecutive frames needed before a note change is accepted. |
-| `--octave-stability` | 3 | Stricter stability for octave changes (prevents brightness flicker). |
-| `--octave-threshold` | 0.5 | Fraction of the stability window that must agree. |
-| `--gamma` | 1.0 | Brighten dark footage (< 1.0) to spread brightness across more octaves. |
-
-For a more reactive response (fast saccades, dense scenes):
-```bash
-uv run pupil-tracker --pd --note-stability 1 --octave-stability 2
-```
-
-For a more stable response (slow contemplative looking):
-```bash
-uv run pupil-tracker --pd --smoothing 5 --note-stability 3 --octave-stability 5
+# Explicit patch selection:
+uv run pupil-tracker --patch TNC_v1
 ```
 
 ## Known Limitations
 
-- **Same-colour transitions**: Moving gaze between two objects of identical hue and brightness produces no note re-trigger, because neither the raw MIDI note nor the fixation ID changes visibly during a smooth head turn. Pupil's fixation detector is sparse and doesn't always catch this.
+- **Same-colour smooth pans**: Moving gaze across a uniform surface while the head pans produces no note re-trigger if hue and brightness are identical throughout. NoteGate's SmoothPan detection handles most cases (fires once on pan entry), but a continuous, slow pan over a perfectly uniform region will only trigger at the start.
 - **Low-saturation colours**: Greys, whites, and near-white pastels have unreliable hue. The patch uses brightness and defaults the note to the current stable note. Minimum saturation threshold is 20/255.
-- **Mixed colour regions**: The gaze region is 50×50px by default. If the region straddles two colours, the Gaussian-weighted average determines the note, which may not correspond to either colour cleanly.
+- **Mixed colour regions**: The gaze region is 50×50px by default. If the region straddles two colours, the average determines the note, which may not correspond to either colour cleanly.

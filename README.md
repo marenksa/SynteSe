@@ -43,7 +43,6 @@ Both commands share these flags:
 --patch NAME             Patch to use (default: TNC_v1)
 --pd-host HOST           Pure Data host (default: 127.0.0.1)
 --pd-port PORT           Pure Data port (default: 9001)
---gamma FLOAT            Gamma correction (< 1.0 brightens, default: 1.0)
 --verbose, -v            Verbose console output
 --no-overlay             Disable colour/brightness overlay
 ```
@@ -77,6 +76,7 @@ recording_path           Path to Pupil Capture recording directory
     ├── signals/
     │   ├── bus.py                  # SignalBus, OutputBus
     │   ├── pipeline.py             # Pipeline: owns detectors, populates SignalBus
+    │   ├── head_gaze_state.py      # HeadGazeState + HeadGazeClassifier
     │   ├── env_color.py            # Colour analysis (raw HSV extraction)
     │   ├── env_scene_change.py     # Full-frame change detection
     │   ├── eye_blinks.py           # Blink/flutter detection, types, constants
@@ -86,14 +86,20 @@ recording_path           Path to Pupil Capture recording directory
     │   └── overlay.py              # Stateless drawing functions
     └── patches/
         ├── base.py                 # Patch protocol + load_patch()
-        ├── TNC_v1/                 # Trigger Note by Color: colour→MIDI note
+        ├── TNC_v1/                 # Trigger Note by Colour: hue→MIDI note
         │   ├── mapping.py          # Note, NoteMapper, hue/brightness constants
         │   ├── gate.py             # NoteGate
         │   ├── patch.py            # ColorMusicPatch
         │   └── README.md
-        └── TgSqC_v1/              # Toggle Sequence by Color: colour→PD toggle
-            ├── mapping.py          # ColorIdMapper
-            └── patch.py            # ColorTogglePatch
+        ├── TgSqC_v1/              # Toggle Sequence by Colour: hue→PD toggle
+        │   ├── mapping.py          # ColorIdMapper
+        │   └── patch.py            # ColorTogglePatch
+        ├── SCfBF/                  # Stream Confidence from Blinks/Flutter
+        │   └── patch.py            # ConfidenceStreamPatch
+        ├── SPX/                    # Stream gaze position + velocity
+        │   └── patch.py            # GazeStreamPatch
+        └── RAVE_v1/               # Gaze/colour/velocity → RAVE latents
+            └── patch.py            # RAVEPatch
 ```
 
 ## Writing a New Patch
@@ -109,41 +115,52 @@ This means experimenting with a new musical idea means writing a new patch, not 
 
 Every loop iteration, detectors populate a `SignalBus` that patches can read from.
 
-#### Eye signals
+#### Head-gaze state
+
+`signals.head_gaze_state` classifies the relationship between eye movement and head movement each frame:
+
+| State | Gaze in frame | Scene change |
+|-------|---------------|--------------|
+| `Rest` | stable | low |
+| `SmoothPan` | stable | high — head moves, gaze rides the camera |
+| `Scanning` | moving | low |
+| `RagLock` | moving | high |
+
+Import: `from eye_synth.signals.head_gaze_state import HeadGazeState`
+
+#### Eye signals (`signals.eye.*`)
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `eye.confidence` | `float` 0–1 | Gaze tracking confidence |
-| `eye.norm_pos` | `(float, float)` | Normalised gaze position (0–1) |
-| `eye.px_pos` | `(int, int)` | Gaze position in pixels |
-| `eye.velocity_px_s` | `float` | Gaze speed in pixels/second |
-| `eye.is_eyes_closed` | `bool` | Between blink onset and offset |
-| `eye.blink` | `BlinkSample \| None` | Non-None for one iteration when a blink completes |
-| `eye.is_flutter_active` | `bool` | During a rapid blink burst |
-| `eye.flutter_blink_count` | `int` | Blinks accumulated in current burst |
-| `eye.flutter` | `FlutterEvent \| None` | Non-None for one iteration when a flutter ends |
-| `eye.fixation_id` | `int \| None` | Non-None for one iteration on new fixation |
+| `confidence` | `float` 0–1 | Gaze tracking confidence |
+| `norm_pos` | `(float, float)` | Normalised gaze position (0–1), Pupil convention |
+| `velocity` | `float` | Gaze speed in pixels/second |
+| `is_eyes_closed` | `bool` | Between blink onset and offset |
+| `eyes_closed_elapsed_ms` | `float` | ms since most recent onset; resets each blink |
+| `blink` | `BlinkSample \| None` | Non-None for one iteration when a blink completes |
+| `is_flutter_active` | `bool` | During a rapid blink burst |
+| `flutter_blink_count` | `int` | Blinks accumulated in current burst |
+| `flutter` | `FlutterEvent \| None` | Non-None for one iteration when a flutter ends |
+| `fixation_id` | `int \| None` | Non-None for one iteration on new fixation |
 
 Blink types: `BLINK` (<400ms), `INTENTIONAL` (≥500ms), `AMBIGUOUS` (400–500ms).
-Flutter threshold: 4+ blinks within 1.5s.
+Flutter threshold: 3+ blinks within 1.5s.
 
-#### Environment signals
+#### Environment signals (`signals.env.*`)
+
+Only populated when `signals.has_env_reading` is True (a gaze region was successfully analysed this iteration).
 
 | Signal | Type | Description |
 |--------|------|-------------|
-| `env.hue` | `float` 0–179 | OpenCV hue at gaze point (temporally smoothed) |
-| `env.raw_hue` | `float \| None` | Instantaneous hue (pre-smoothing); None if saturation too low |
-| `env.hue_normalized` | `float` 0–1 | Normalised hue |
-| `env.saturation` | `float` 0–255 | Colour saturation at gaze point |
-| `env.brightness` | `float` 0–255 | Brightness at gaze point (smoothed) |
-| `env.brightness_normalized` | `float` 0–1 | Normalised brightness |
-| `env.scene_change` | `float` 0–1 | Full-frame change magnitude (head movement, cuts) |
-
-`signals.has_env_reading` is True only when a gaze region was successfully analysed on this iteration.
+| `hue` | `float` 0–179 | OpenCV hue at gaze point (temporally smoothed) |
+| `raw_hue` | `float \| None` | Instantaneous hue (pre-smoothing); None if saturation too low |
+| `saturation` | `float` 0–255 | Colour saturation at gaze point |
+| `brightness` | `float` 0–255 | Brightness at gaze point (smoothed) |
+| `scene_change` | `float` 0–1 | Full-frame change magnitude (head movement, scene cuts) |
 
 ### Patch structure
 
-A patch is a class with two methods:
+A patch is a class with three methods:
 
 ```python
 class MyPatch:
@@ -154,28 +171,36 @@ class MyPatch:
     def reset(self) -> None:
         """Called on seek or restart."""
         ...
+
+    def shutdown(self, outputs: OutputBus) -> None:
+        """Called on exit — send any cleanup messages (e.g. silence notes)."""
+        ...
 ```
 
 `outputs.send("message_name", value1, value2, ...)` sends a FUDI message to Pure Data.
 
-**Example — gaze speed controls reverb, scene cuts trigger a hit:**
+**Example — gaze speed controls reverb, smooth pans trigger a hit:**
 
 ```python
+from eye_synth.signals.head_gaze_state import HeadGazeState
+
 class SceneMotionPatch:
     def update(self, signals, outputs):
-        outputs.send("reverb", signals.eye.velocity_px_s / 2000.0)
+        outputs.send("reverb", signals.eye.velocity / 2000.0)
 
-        if signals.env.scene_change > 0.4:
-            outputs.send("hit", signals.env.scene_change)
+        if signals.head_gaze_state is HeadGazeState.SmoothPan:
+            outputs.send("hit", 1)
 
         if signals.eye.blink is not None:
             from eye_synth.signals.eye_blinks import BlinkType
             if signals.eye.blink.blink_type == BlinkType.INTENTIONAL:
                 outputs.send("freeze", 1)
 
-
     def reset(self):
         pass
+
+    def shutdown(self, outputs):
+        outputs.send("reverb", 0)
 ```
 
 Then register it in `patches/base.py`:

@@ -5,7 +5,7 @@ Messages sent every frame:
     gaze_y <0–1>      —  normalised vertical gaze position (Pupil: 0=bottom, 1=top)
     velocity <float>  —  gaze speed in pixels/second (held at last good value during low confidence)
 
-PD patches (SPXV_v1, SPXV_v2, SPXV_v3) handle all pitch/loudness mapping from these values.
+PD patches (SPX_v1, SPX_v2, SPX_v3) handle all pitch/loudness mapping from these values.
 """
 
 from __future__ import annotations
