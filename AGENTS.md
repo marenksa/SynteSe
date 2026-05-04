@@ -132,22 +132,21 @@ Register the patch in `patches/base.py` under `load_patch()`. Create `patches/<n
 
 These live entirely in `patches/TNC_v1/` — they are prototype-specific.
 
-**NoteMapper** converts `signals.env.hue`, `signals.env.raw_hue`, and `signals.env.brightness` into a `NoteReading(note, octave, midi_note, raw_midi_note)`. Owns stability windows for note and octave to suppress per-frame jitter.
+**NoteMapper** converts `signals.env.hue`, `signals.env.raw_hue`, and `signals.env.brightness` into a `NoteReading(note, octave, midi_note, raw_midi_note)`. Owns the octave stability window only; note stability is handled downstream by NoteGate.
 
-**NoteGate** fires when the MIDI note stabilises after a real gaze transition. Uses `raw_midi_note` (pre-stability) for transition streak counting, and `head_gaze_state` to detect smooth pans.
+**NoteGate** fires when the MIDI note stabilises after a real gaze transition. Uses `raw_midi_note` (pre-smoothing) for transition streak counting.
 
 **Why not gaze velocity or fixation events**: With a head-mounted tracker, gaze pixel position doesn't represent world position — the scene moves, not the gaze. NoteGate detects when *content* changes and stabilises instead.
 
 **NoteGate parameters:**
-- `stable_frames` (default 4) — consecutive identical frames to confirm note
+- `stable_frames` (default 3) — consecutive identical frames to confirm note
 - `min_transition_frames` (default 3) — frames of different raw note to arm a diff-streak re-trigger
 
 **Fires when** (in priority order):
 1. Stable note differs from last triggered (all colour transitions)
-2. State just entered `SmoothPan` (same-colour smooth head pans — fires once on entry)
-3. Raw note passed through different values for `min_transition_frames` frames (same-colour saccades)
+2. Raw note passed through different values for `min_transition_frames` frames (same-colour saccades via a chromatic path)
 
-**Does not fire**: brief 1–2 frame jitter, resting on same content, during flutter
+**Does not fire**: brief 1–2 frame jitter, resting on same content, during flutter, same-colour saccades with no chromatic path
 
 ### Blink Detection
 

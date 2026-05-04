@@ -71,26 +71,22 @@ class NoteReading:
 class NoteMapper:
     """Maps smoothed hue and brightness to stable note/octave/MIDI.
 
-    Owns the stability windows that suppress per-frame jitter.
+    Owns the octave stability window that suppresses brightness jitter.
+    Note stability is handled downstream by NoteGate.
     """
 
     _MIN_OCTAVE = 2
     _MAX_OCTAVE = 6
-    _NOTE_STABILITY_THRESHOLD = 0.5
 
     def __init__(
         self,
-        note_stability_frames: int = 2,
         octave_stability_frames: int = 3,
         octave_stability_threshold: float = 0.5,
     ) -> None:
-        self._note_stability_frames = note_stability_frames
         self._octave_stability_frames = octave_stability_frames
         self._octave_stability_threshold = octave_stability_threshold
 
-        self._note_history: deque[Note] = deque(maxlen=note_stability_frames)
         self._octave_history: deque[int] = deque(maxlen=octave_stability_frames)
-        self._current_note: Note = Note.C
         self._current_octave: int = self._MIN_OCTAVE
 
     def update(
@@ -100,28 +96,25 @@ class NoteMapper:
         smoothed_brightness: float,
     ) -> NoteReading:
         """Compute stable note/octave and return a NoteReading."""
-        raw_note = self._hue_to_note(smoothed_hue)
-        stable_note = self._get_stable_note(raw_note)
+        note = self._hue_to_note(smoothed_hue)
 
         raw_octave = self._brightness_to_octave(smoothed_brightness)
         stable_octave = self._get_stable_octave(raw_octave)
 
-        midi_note = self._calculate_midi_note(stable_note, stable_octave)
+        midi_note = self._calculate_midi_note(note, stable_octave)
 
-        raw_note_val = self._hue_to_note(raw_hue) if raw_hue is not None else stable_note
+        raw_note_val = self._hue_to_note(raw_hue) if raw_hue is not None else note
         raw_midi_note = self._calculate_midi_note(raw_note_val, stable_octave)
 
         return NoteReading(
-            note=stable_note,
+            note=note,
             octave=stable_octave,
             midi_note=midi_note,
             raw_midi_note=raw_midi_note,
         )
 
     def reset(self) -> None:
-        self._note_history.clear()
         self._octave_history.clear()
-        self._current_note = Note.C
         self._current_octave = self._MIN_OCTAVE
 
     def _hue_to_note(self, hue: float) -> Note:
@@ -129,15 +122,6 @@ class NoteMapper:
             if low <= hue < high:
                 return note
         return Note.C
-
-    def _get_stable_note(self, raw_note: Note) -> Note:
-        self._note_history.append(raw_note)
-        if len(self._note_history) >= self._note_stability_frames:
-            counts = Counter(self._note_history)
-            most_common, count = counts.most_common(1)[0]
-            if count >= self._note_stability_frames * self._NOTE_STABILITY_THRESHOLD:
-                self._current_note = most_common
-        return self._current_note
 
     def _brightness_to_octave(self, brightness: float) -> int:
         # _MIN_OCTAVE=2 gives a 4-step range so octave 3 covers half the
