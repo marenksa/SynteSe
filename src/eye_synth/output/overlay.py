@@ -31,6 +31,11 @@ class OverlayConfig:
 
     eye_panel_size: int = 150           # display width in px
 
+    # Optional octave zone markers for the brightness bar: sequence of
+    # (start_brightness, zone_label) pairs. First entry labels the leftmost zone;
+    # subsequent entries add a tick line and label the zone to its right.
+    brightness_octave_markers: tuple[tuple[float, str], ...] = ()
+
 
 DEFAULT_OVERLAY = OverlayConfig()
 
@@ -42,6 +47,7 @@ def draw_brightness_bar(
     y: int = 30,
     width: int = 200,
     height: int = 20,
+    octave_markers: tuple[tuple[float, str], ...] = (),
 ) -> None:
     cv2.rectangle(frame, (x, y), (x + width, y + height), (50, 50, 50), -1)
     filled_width = int(brightness / 255 * width)
@@ -50,9 +56,26 @@ def draw_brightness_bar(
         color = (int(50 + ratio * 50), int(50 + ratio * 200), int(50 + ratio * 200))
         cv2.rectangle(frame, (x, y), (x + filled_width, y + height), color, -1)
     cv2.rectangle(frame, (x, y), (x + width, y + height), (200, 200, 200), 1)
+
+    for i, (start_b, label) in enumerate(octave_markers):
+        tick_x = x + int(start_b / 255 * width)
+        if start_b > 0:
+            cv2.line(frame, (tick_x, y), (tick_x, y + height), (220, 220, 220), 1)
+        end_b = octave_markers[i + 1][0] if i + 1 < len(octave_markers) else 255
+        mid_x = x + int((start_b + end_b) / 2 / 255 * width)
+        cv2.putText(frame, label, (mid_x - 4, y + height - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (220, 220, 220), 1)
+
     cv2.putText(frame, f"Brightness: {brightness:.0f}",
                 (x + width + 10, y + height - 3),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _midi_to_name(midi: int) -> str:
+    return f"{_NOTE_NAMES[midi % 12]}{midi // 12 - 1}"
 
 
 def draw_color_info(
@@ -61,6 +84,8 @@ def draw_color_info(
     x: int = 10,
     y: int = 60,
     size: int = 40,
+    current_note: int | None = None,
+    note_flash: bool = False,
 ) -> None:
     # Derive a display color from the smoothed hue
     hsv_pixel = np.uint8([[[int(color_reading.smoothed_hue), 200, 200]]])
@@ -68,7 +93,15 @@ def draw_color_info(
     color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
 
     cv2.rectangle(frame, (x, y), (x + size, y + size), color, -1)
-    cv2.rectangle(frame, (x, y), (x + size, y + size), (200, 200, 200), 2)
+    if current_note is not None:
+        label = _midi_to_name(current_note)
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.putText(frame, label,
+                    (x + (size - tw) // 2, y + (size + th) // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    border_color = (255, 255, 255) if note_flash else (200, 200, 200)
+    border_thickness = 3 if note_flash else 2
+    cv2.rectangle(frame, (x, y), (x + size, y + size), border_color, border_thickness)
     hue_str = f"{color_reading.hue:.0f}" if color_reading.hue is not None else "N/A"
     cv2.putText(frame, f"H:{hue_str}", (x + size + 10, y + 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -197,6 +230,8 @@ def draw_overlay(
     flutter_label: str | None = None,
     blink_count: int = 0,
     flutter_count: int = 0,
+    current_note: int | None = None,
+    note_flash: bool = False,
 ) -> None:
     """Draw all overlay elements requested by ``cfg`` onto ``frame`` in-place."""
     if cfg.show_gaze_crosshair and gaze_px is not None:
@@ -204,9 +239,11 @@ def draw_overlay(
     if cfg.show_region_box and gaze_px is not None:
         draw_region_box(frame, *gaze_px, region_size, confidence)
     if cfg.show_color_info and color_reading is not None:
-        draw_color_info(frame, color_reading, x=10, y=10)
+        draw_color_info(frame, color_reading, x=10, y=10,
+                        current_note=current_note, note_flash=note_flash)
     if cfg.show_brightness_bar and color_reading is not None:
-        draw_brightness_bar(frame, color_reading.smoothed_brightness, x=10, y=60)
+        draw_brightness_bar(frame, color_reading.smoothed_brightness, x=10, y=60,
+                            octave_markers=cfg.brightness_octave_markers)
     if cfg.show_confidence:
         draw_confidence(frame, confidence, x=10, y=30)
     if cfg.show_eye_panel:

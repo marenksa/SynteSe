@@ -63,6 +63,11 @@ class GazeVideoPlayer:
         self._flutter_flash_until = 0.0
         self._last_flutter_event = None
 
+        # Note display state
+        self._note_flash_until = 0.0
+        self._last_displayed_note: int | None = None
+        self._dry_outputs = OutputBus()  # no PD sink — used when paused
+
     def draw_info(self, frame: np.ndarray) -> np.ndarray:
         height, width = frame.shape[:2]
         panel_height = 60
@@ -102,12 +107,14 @@ class GazeVideoPlayer:
         for i, line in enumerate([
             "KEYBOARD CONTROLS", "",
             "SPACE    - Play/Pause",
-            "LEFT     - Previous frame",
-            "RIGHT    - Next frame",
+            "UP       - Step forward 1 frame",
+            "DOWN     - Step back 1 frame",
+            "LEFT     - Back 30 frames",
+            "RIGHT    - Forward 30 frames",
             "HOME     - Go to start",
             "END      - Go to end",
-            "[        - Decrease speed",
-            "]        - Increase speed",
+            "O        - Decrease speed",
+            "P        - Increase speed",
             "0-9      - Jump to 0%-90%",
             "H        - Toggle this help",
             "Q / ESC  - Quit",
@@ -171,8 +178,8 @@ class GazeVideoPlayer:
             actual_index, current_frame = result
             self.frame_index = actual_index
 
-            # --- Analysis and patch dispatch (only when playing) ---
-            if self.pipeline is not None and self.playing:
+            # --- Analysis (always) and patch dispatch (only when playing) ---
+            if self.pipeline is not None:
                 world_ts = self.recording.get_frame_timestamp(self.frame_index)
                 gaze = self.recording.get_gaze_for_frame(self.frame_index)
                 blink = self.recording.get_blink_at_timestamp(world_ts)
@@ -195,7 +202,12 @@ class GazeVideoPlayer:
                     if self.output is not None:
                         self.output.emit(self._last_color_reading)
 
-                self._patch.update(signals, self._outputs)
+                active_outputs = self._outputs if self.playing else self._dry_outputs
+                self._patch.update(signals, active_outputs)
+                _current_note = getattr(self._patch, "current_midi_note", None)
+                if _current_note != self._last_displayed_note:
+                    self._last_displayed_note = _current_note
+                    self._note_flash_until = world_ts + 0.4
 
             # --- Draw overlays ---
             display_frame = current_frame.copy()
@@ -231,6 +243,8 @@ class GazeVideoPlayer:
                     if _is_flutter and self._last_flutter_event is not None else None
                 )
 
+                _note_flash = _world_ts < self._note_flash_until
+
                 draw_overlay(
                     display_frame, self._overlay_cfg,
                     gaze_px=_gaze_px,
@@ -244,6 +258,8 @@ class GazeVideoPlayer:
                     flutter_label=_flutter_label,
                     blink_count=len(self.recording.blink_data),
                     flutter_count=len(self.recording.flutter_data),
+                    current_note=self._last_displayed_note,
+                    note_flash=_note_flash,
                 )
             display_frame = self.draw_info(display_frame)
             if show_help:
@@ -268,23 +284,31 @@ class GazeVideoPlayer:
                     need_seek = True
             elif key == ord("h"):
                 show_help = not show_help
-            elif key == 81 or key == 2:   # Left arrow
+            elif key == 82 or key == 0:   # Up arrow — step forward 1 frame
+                self.playing = False
+                self.frame_index = min(total_frames - 1, self.frame_index + 1)
+                need_seek = True
+            elif key == 84 or key == 1:   # Down arrow — step back 1 frame
+                self.playing = False
+                self.frame_index = max(0, self.frame_index - 1)
+                need_seek = True
+            elif key == 81 or key == 2:   # Left arrow — back 30 frames
                 self.playing = False
                 self.frame_index = max(0, self.frame_index - 30)
                 need_seek = True
-            elif key == 83 or key == 3:   # Right arrow
+            elif key == 83 or key == 3:   # Right arrow — forward 30 frames
                 self.playing = False
                 self.frame_index = min(total_frames - 1, self.frame_index + 30)
                 need_seek = True
-            elif key == 80 or key == 0:   # Home
+            elif key == 80:               # Home
                 self.frame_index = 0
                 need_seek = True
-            elif key == 87 or key == 1:   # End
+            elif key == 87:               # End
                 self.frame_index = total_frames - 1
                 need_seek = True
-            elif key == ord("["):
+            elif key == ord("o"):
                 self.playback_speed = max(0.25, self.playback_speed - 0.25)
-            elif key == ord("]"):
+            elif key == ord("p"):
                 self.playback_speed = min(4.0, self.playback_speed + 0.25)
             elif ord("0") <= key <= ord("9"):
                 self.seek_to_percent((key - ord("0")) / 10.0)

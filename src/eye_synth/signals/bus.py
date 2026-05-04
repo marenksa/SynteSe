@@ -72,6 +72,7 @@ class OutputBus:
 
     def __init__(self, pd_sink=None) -> None:
         self._pd = pd_sink
+        self.last_note_on: int | None = None  # set each time note_on is sent; caller clears
 
     def send(self, key: str, *values) -> None:
         """Send a named message to Pure Data via FUDI.
@@ -81,6 +82,8 @@ class OutputBus:
             outputs.send("effect", 0.8)
             outputs.send("confidence", 0.95)
         """
+        if key == "note_on" and values:
+            self.last_note_on = int(values[0])
         if self._pd is not None:
             self._pd.send(key, *values)
 
