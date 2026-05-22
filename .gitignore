@@ -46,5 +46,6 @@ brightness_*.csv
 brightness_*.jsonl
 recordings/
 ai-transcripts/
+AGENTS.local.md
 articles/
 

@@ -23,7 +23,7 @@ Brightness maps to octave (3–6): darker → lower, brighter → higher.
 A note triggers when the gaze settles on new content. This is handled by `NoteGate` — it fires once when the detected MIDI note stabilises after a real transition, and suppresses jitter from text and fine details.
 
 **Pd message:** `note_on <midi_note> <brightness>`
-- `midi_note`: 36–83 (C3–B6)
+- `midi_note`: 48–95 (C3–B6)
 - `brightness`: 0.0–1.0 (can be used for velocity/dynamics)
 
 ### Blink effects

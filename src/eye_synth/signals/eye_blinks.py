@@ -6,7 +6,7 @@ Handles everything related to eyelid events:
 - Detecting flutter bursts from rapid blink sequences
 - Tracking whether eyes are currently closed (between onset and offset)
 
-The StreamingBlinkTracker is used by main.py for live tracking.
+The StreamingBlinkTracker is used by tracker.py for live tracking.
 The same types and constants are used by input/recording.py for playback.
 """
 

@@ -19,7 +19,7 @@ uv sync
 ## Quick Start
 
 ```bash
-# 1. Open Pure Data and load a patch from puredata/
+# 1. Open puredata/TNC_v1.pd in Pure Data
 # 2. Enable DSP in Pure Data (Media → DSP On)
 
 # Run live with Pupil Core hardware:
@@ -64,8 +64,14 @@ recording_path           Path to Pupil Capture recording directory
 
 ```
 ├── puredata/                       # Pure Data synthesis patches
-│   ├── TNC_v1.pd
-│   └── TgSqC_v1.pd
+│   ├── TNC_v1.pd                   # Default patch (hue→note, brightness→octave)
+│   ├── TgSqC_v1.pd                 # Toggle sequence by colour
+│   ├── SCfBF_v1.pd                 # Confidence stream + eye-state booleans (v1)
+│   ├── SCfBF_v2.pd                 # Confidence stream + eye-state booleans (v2)
+│   ├── SPX_v1.pd                   # Gaze position + velocity → pitch/loudness (v1)
+│   ├── SPX_v2.pd                   # Gaze position + velocity → pitch/loudness, inverted (v2)
+│   ├── SPX_v3.pd                   # Gaze position + velocity → pitch/loudness (v3)
+│   └── RAVE_v1.pd                  # RAVE latent dimensions for nn~
 ├── recordings/                     # Pupil Capture recordings
 └── src/eye_synth/
     ├── tracker.py                  # Live tracker entry point (pupil-tracker)
@@ -143,7 +149,7 @@ Import: `from eye_synth.signals.head_gaze_state import HeadGazeState`
 | `flutter` | `FlutterEvent \| None` | Non-None for one iteration when a flutter ends |
 | `fixation_id` | `int \| None` | Non-None for one iteration on new fixation |
 
-Blink types: `BLINK` (<400ms), `INTENTIONAL` (≥500ms), `AMBIGUOUS` (400–500ms).
+Blink types: `BLINK` (≤400ms), `INTENTIONAL` (≥500ms), `AMBIGUOUS` (>400ms and <500ms).
 Flutter threshold: 3+ blinks within 1.5s.
 
 #### Environment signals (`signals.env.*`)
@@ -226,21 +232,15 @@ Each patch should have its own `README.md` documenting its specific mappings.
 
 Patches are named `{Control}{Target}{Source}_v{N}`, where each token describes what the patch does: "trigger note by color" → `TNC_v1`.
 
-| Category | Term | Code |
-|---|---|---|
-| **Control** | Trigger | `T` |
-| **Control** | Toggle | `Tg` |
-| **Control** | Stream | `S` |
-| **Target** | Note | `N` |
-| **Target** | Pitch | `P` |
-| **Target** | Sequence | `Sq` |
-| **Target** | Effect | `E` |
-| **Source** | Color | `C` |
-| **Source** | Confidence | `Cf` |
-| **Source** | Coordinates | `X` |
-| **Source** | Blink | `B` |
-| **Source** | Flutter | `F` |
-| **Source** | Brightness | `Br` |
+| Control | | Target | | Source | |
+|:---|:---|:---|:---|:---|:---|
+| Trigger | `T` | Note | `N` | Color | `C` |
+| Toggle | `Tg` | Pitch | `P` | Brightness | `Br` |
+| Stream | `S` | Sequence | `Sq` | Coordinates | `X` |
+| | | Effect | `E` | Velocity | `V` |
+| | | | | Confidence | `Cf` |
+| | | | | Blink | `B` |
+| | | | | Flutter | `F` |
 
 
 ## Troubleshooting
@@ -251,6 +251,3 @@ Patches are named `{Control}{Target}{Source}_v{N}`, where each token describes w
 
 **Connection timeout** — Verify Pupil Capture is on port 50020; check firewall if connecting remotely.
 
-## License
-
-MIT

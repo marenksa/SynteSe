@@ -49,7 +49,7 @@ OutputBus (signals/bus.py)
 | `patches/base.py` | Patch protocol + load_patch() factory |
 | `patches/TNC_v1/` | Trigger Note by Colour: hue→note, brightness→octave, flutter→effect |
 | `patches/TgSqC_v1/` | Toggle Sequence by Colour: hue→color ID, stability→PD toggle |
-| `patches/SCfBF/` | Stream Confidence from Blinks/Flutter: eye state → PD booleans |
+| `patches/SCfBF/` | Stream Confidence from Blinks/Flutter: continuous confidence + eye-state booleans → PD |
 | `patches/SPX/` | Stream Pitch/X-Y/Velocity: gaze coords + velocity → PD |
 | `patches/RAVE_v1/` | Gaze/colour/velocity → RAVE latent dims for nn~ |
 
@@ -152,9 +152,9 @@ These live entirely in `patches/TNC_v1/` — they are prototype-specific.
 
 Uses Pupil Capture's built-in blink detector (onset/offset events), not confidence-based gating.
 
-- `BlinkType.BLINK` — duration < 400ms
+- `BlinkType.BLINK` — duration ≤ 400ms
 - `BlinkType.INTENTIONAL` — duration ≥ 500ms
-- `BlinkType.AMBIGUOUS` — 400–500ms
+- `BlinkType.AMBIGUOUS` — >400ms and <500ms
 
 **Flutter**: 3+ blinks in a 1.5s sliding window. Ends after 0.3s with no new blink.
 
@@ -217,23 +217,6 @@ The remaining parity obligation:
 - **Type hints**: Required on all functions
 - **Dataclasses**: Use `@dataclass(frozen=True)` for data objects
 - **Protocols**: Use `typing.Protocol` for interfaces
-
-## Session Transcripts
-
-All agent sessions should be logged for later review.
-
-**Location:** `ai-transcripts/` in the repo root.
-
-**`ai-transcripts/` is gitignored. Never commit transcript files** — not directly, not force-added, not in any form. They are local records only.
-
-**Do not read old transcripts** unless the user asks or you need the format as reference.
-
-When the user says **"make a transcript"**, write a summary to `ai-transcripts/YYYY-MM-DD-<topic>.md` following the format in `ai-transcripts/TEMPLATE.md`:
-- Header: date, model, tool, topic, commit(s)
-- Context paragraph explaining the why
-- Each user prompt condensed under `### User`
-- Each assistant response condensed under `### Assistant`
-- End with `## Summary of Changes`: design rationale, files table, key decisions, commit hashes
 
 ## Testing Commands
 
