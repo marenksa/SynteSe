@@ -1,5 +1,6 @@
 """TNC_v1 patch: hue → MIDI note, brightness → octave, flutter → effect."""
 
+from eye_synth.patches.base import register_patch
 from eye_synth.patches.TNC_v1.gate import NoteGate
 from eye_synth.patches.TNC_v1.mapping import (
     HUE_RANGES,
@@ -11,6 +12,8 @@ from eye_synth.patches.TNC_v1.mapping import (
     NoteReading,
 )
 from eye_synth.patches.TNC_v1.patch import ColorMusicPatch
+
+register_patch("TNC_v1", ColorMusicPatch)
 
 __all__ = [
     "ColorMusicPatch",

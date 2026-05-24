@@ -91,7 +91,7 @@ recording_path           Path to Pupil Capture recording directory
     │   ├── sinks.py                # PureDataSink, ColorConsoleSink, MultiSink
     │   └── overlay.py              # Stateless drawing functions
     └── patches/
-        ├── base.py                 # Patch protocol + load_patch()
+        ├── base.py                 # Patch protocol, registry + load_patch()
         ├── TNC_v1/                 # Trigger Note by Colour: hue→MIDI note
         │   ├── mapping.py          # Note, NoteMapper, hue/brightness constants
         │   ├── gate.py             # NoteGate
@@ -116,6 +116,8 @@ The system is split into two layers:
 - **Patches** — map those signals to sound. Each prototype is its own patch file.
 
 This means experimenting with a new musical idea means writing a new patch, not touching any detection code.
+
+There is an AGENTS.md file to facilitate the use of coding agents to keep working on this project, including creating prototypes.
 
 ### Available Signals
 
@@ -209,17 +211,22 @@ class SceneMotionPatch:
         outputs.send("reverb", 0)
 ```
 
-Then register it in `patches/base.py`:
+Then register it in your patch's `__init__.py`:
 
 ```python
-def load_patch(name: str) -> Patch:
-    ...
-    if name == "scene_motion":
-        from eye_synth.patches.scene_motion import SceneMotionPatch
-        return SceneMotionPatch()
+from eye_synth.patches.base import register_patch
+from eye_synth.patches.scene_motion.patch import SceneMotionPatch
+
+register_patch("scene_motion", SceneMotionPatch)
 ```
 
-And run it:
+And import it in `patches/__init__.py` so it loads at startup:
+
+```python
+import eye_synth.patches.scene_motion  # noqa: F401
+```
+
+Then run it:
 
 ```bash
 uv run pupil-tracker --patch scene_motion

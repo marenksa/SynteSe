@@ -1,10 +1,12 @@
-"""Patch protocol and factory."""
+"""Patch protocol, registry, and factory."""
 
 from __future__ import annotations
 
 from typing import Protocol
 
 from eye_synth.signals.bus import OutputBus, SignalBus
+
+_REGISTRY: dict[str, type] = {}
 
 
 class Patch(Protocol):
@@ -23,34 +25,14 @@ class Patch(Protocol):
         ...
 
 
-def load_patch(name: str) -> Patch:
-    """Load a patch by name.
+def register_patch(name: str, cls: type) -> None:
+    """Register a patch class under a given name."""
+    _REGISTRY[name] = cls
 
-    Available patches:
-        TNC_v1        —  hue→note, brightness→octave, flutter→effect
-        TgSqC_v1      —  hue→color ID (1–7), stability→PD toggle
-        SCfBF_v1      —  eye confidence stream → PD confidence signal (PD v1)
-        SCfBF_v2      —  eye confidence stream → PD confidence signal (PD v2)
-        RAVE_v1       —  gaze/colour/velocity → RAVE latent dims z0–z4 for nn~
-        SPX_v1       —  gaze coords + velocity → pitch/loudness (PD v1)
-        SPX_v2       —  gaze coords + velocity → pitch/loudness inverted (PD v2)
-        SPX_v3       —  gaze coords + velocity → pitch/loudness (PD v3)
-    """
-    if name == "TNC_v1":
-        from eye_synth.patches.TNC_v1 import ColorMusicPatch
-        return ColorMusicPatch()
-    if name == "TgSqC_v1":
-        from eye_synth.patches.TgSqC_v1 import ColorTogglePatch
-        return ColorTogglePatch()
-    if name in ("SCfBF_v1", "SCfBF_v2"):
-        from eye_synth.patches.SCfBF import ConfidenceStreamPatch
-        return ConfidenceStreamPatch()
-    if name == "RAVE_v1":
-        from eye_synth.patches.RAVE_v1 import RAVEPatch
-        return RAVEPatch()
-    if name in ("SPX_v1", "SPX_v2", "SPX_v3"):
-        from eye_synth.patches.SPX import GazeStreamPatch
-        return GazeStreamPatch()
-    raise ValueError(
-        f"Unknown patch: {name!r}. Available patches: TNC_v1, TgSqC_v1, SCfBF_v1, SCfBF_v2, RAVE_v1, SPX_v1, SPX_v2, SPX_v3"
-    )
+
+def load_patch(name: str) -> Patch:
+    """Load a patch by name. Patches self-register via register_patch()."""
+    if name not in _REGISTRY:
+        available = ", ".join(sorted(_REGISTRY))
+        raise ValueError(f"Unknown patch: {name!r}. Available: {available}")
+    return _REGISTRY[name]()
