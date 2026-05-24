@@ -11,7 +11,7 @@
 #X floatatom 684 251 5 0 1 1 blink - - 0;
 #X floatatom 488 440 5 0 1 1 flutter - - 0;
 #X floatatom 847 225 5 0 1 1 intentional - - 0;
-#X obj 847 328 ambience-generator;
+#X obj 847 328 SCfBF_ambience-generator;
 #X obj 847 299 tgl 19 0 empty empty empty 0 -10 0 12 #c6feff #000000 #000000 0 1;
 #X obj 520 123 output~;
 #X obj 847 445 throw~ output;
