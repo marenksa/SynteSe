@@ -44,8 +44,10 @@ Thumbs.db
 *.jsonl
 brightness_*.csv
 brightness_*.jsonl
-recordings/
+recordings/archive/
 ai-transcripts/
 AGENTS.local.md
 articles/
 
+old_puredata/
+recordings/**/*.mp4

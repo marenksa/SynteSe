@@ -1,0 +1,12 @@
+{
+    "duration_s": 38.665650209004525,
+    "meta_version": "2.3",
+    "min_player_version": "2.0",
+    "recording_name": "2026_02_14",
+    "recording_software_name": "Pupil Capture",
+    "recording_software_version": "3.5.7",
+    "recording_uuid": "aff6eb26-d4ff-4b1f-9175-6c4d8451a6e4",
+    "start_time_synced_s": 477468.28865995805,
+    "start_time_system_s": 1771081535.190198,
+    "system_info": "User: root, Platform: Darwin, Machine: mAir.local, Release: 25.2.0, Version: Darwin Kernel Version 25.2.0: Tue Nov 18 21:03:25 PST 2025; root:xnu-12377.61.12~1/RELEASE_ARM64_T8122"
+}
