@@ -1,6 +1,6 @@
-# Eye Tracking Music System
+# The SynteSe Toolkit
 
-Eye tracking system for building audiovisual prototypes with Pupil Core. Run live with the tracker or from recorded sessions with the player — both are full performance modes. Detects signals from the environment (colour, brightness, scene changes) and from the eyes (gaze position, confidence, blinks, flutter, velocity) and routes them to sound synthesis through Pure Data.
+SynteSe is a toolkit for building audiovisual prototypes with Pupil Core. Run live with the tracker or from recorded sessions with the player — both are full performance modes. Detects signals from the environment (colour, brightness, scene changes) and from the eyes (gaze position, confidence, blinks, flutter, velocity) and routes them to sound synthesis through Pure Data.
 
 ## Installation
 
