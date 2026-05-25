@@ -12,8 +12,9 @@ dependencies = [
 ]
 
 [project.scripts]
-pupil-tracker = "eye_synth.tracker:main"
-pupil-player = "eye_synth.player:main"
+pupil-tracker = "base.tracker:main"
+pupil-player = "base.player:main"
+new-prototype = "prototypes.new_prototype:main"
 
 [dependency-groups]
 dev = [
@@ -25,7 +26,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/eye_synth"]
+packages = ["base", "prototypes"]
 
 [tool.ty.environment]
 python = ".venv"

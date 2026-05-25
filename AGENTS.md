@@ -6,19 +6,19 @@ This document provides guidance for AI agents working in this repository.
 
 **Goal**: Build a modular eye tracking system for creating audiovisual prototypes with Pupil Core. The system detects signals from the gaze and environment, and routes them to sound synthesis in Pure Data via swappable patches.
 
-**Design philosophy**: Detectors and creative mappings are strictly separated. Detectors run the same way regardless of the prototype. Each prototype is a self-contained patch file. See `patches/base.py` for the `Patch` protocol.
+**Design philosophy**: Detectors and creative mappings are strictly separated. Detectors run the same way regardless of the prototype. Each prototype is a self-contained package under `prototypes/`. See `base/patches/__init__.py` for the `Patch` protocol.
 
 ## Architecture
 
 ```
 Pupil Capture (external app)
     → ZMQ/MessagePack
-    → input/live.py        — raw data (gaze, frames, blinks, fixations)
-    → tracker.py           — live entry point
-    → player.py            — recording entry point
-    → signals/pipeline.py  — owns detectors, populates SignalBus each iteration
+    → base/input/live.py        — raw data (gaze, frames, blinks, fixations)
+    → base/tracker.py           — live entry point
+    → base/player.py            — recording entry point
+    → base/signals/pipeline.py  — owns detectors, populates SignalBus each iteration
 
-SignalBus (signals/bus.py)
+SignalBus (base/signals/bus.py)
     head_gaze_state   — Rest | SmoothPan | Scanning | RagLock
     eye.*             — confidence, norm_pos, velocity, blinks, flutter, fixation_id
     env.*             — hue, raw_hue, saturation, brightness, scene_change
@@ -33,25 +33,25 @@ OutputBus (signals/bus.py)
 
 | File | Purpose |
 |------|---------|
-| `input/live.py` | ZMQ connection to Pupil Capture, parses gaze/frame/blink/fixation |
-| `input/recording.py` | Loads Pupil recordings (gaze, fixations, blinks, flutter, video) |
-| `signals/pipeline.py` | Pipeline: owns all detectors, populates SignalBus each iteration |
-| `signals/bus.py` | SignalBus, EyeSignals, EnvSignals, OutputBus |
-| `signals/head_gaze_state.py` | HeadGazeState enum + HeadGazeClassifier |
-| `signals/env_color.py` | Colour analysis: ColorAnalyzer, FrameProcessor |
-| `signals/env_scene_change.py` | Full-frame change magnitude |
-| `signals/eye_blinks.py` | Streaming blink/flutter detection, BlinkType, constants |
-| `signals/eye_gaze.py` | Gaze speed in px/s |
-| `output/sinks.py` | PureDataSink (FUDI/TCP), ColorConsoleSink, MultiSink |
-| `output/overlay.py` | Stateless drawing functions (shared by tracker.py and player.py) |
-| `tracker.py` | Live entry point: pipeline.process_live() → overlay → patch |
-| `player.py` | Recording entry point: pipeline.process_recording_frame() → patch |
-| `patches/base.py` | Patch protocol + load_patch() factory |
-| `patches/TNC_v1/` | Trigger Note by Colour: hue→note, brightness→octave, flutter→effect |
-| `patches/TgSqC_v1/` | Toggle Sequence by Colour: hue→color ID, stability→PD toggle |
-| `patches/SCfBF/` | Stream Confidence from Blinks/Flutter: continuous confidence + eye-state booleans → PD |
-| `patches/SPX/` | Stream Pitch/X-Y/Velocity: gaze coords + velocity → PD |
-| `patches/RAVE_v1/` | Gaze/colour/velocity → RAVE latent dims for nn~ |
+| `base/input/live.py` | ZMQ connection to Pupil Capture, parses gaze/frame/blink/fixation |
+| `base/input/recording.py` | Loads Pupil recordings (gaze, fixations, blinks, flutter, video) |
+| `base/signals/pipeline.py` | Pipeline: owns all detectors, populates SignalBus each iteration |
+| `base/signals/bus.py` | SignalBus, EyeSignals, EnvSignals, OutputBus |
+| `base/signals/head_gaze_state.py` | HeadGazeState enum + HeadGazeClassifier |
+| `base/signals/env_color.py` | Colour analysis: ColorAnalyzer, FrameProcessor |
+| `base/signals/env_scene_change.py` | Full-frame change magnitude |
+| `base/signals/eye_blinks.py` | Streaming blink/flutter detection, BlinkType, constants |
+| `base/signals/eye_gaze.py` | Gaze speed in px/s |
+| `base/output/sinks.py` | PureDataSink (FUDI/TCP), ColorConsoleSink, MultiSink |
+| `base/output/overlay.py` | Stateless drawing functions (shared by tracker.py and player.py) |
+| `base/tracker.py` | Live entry point: pipeline.process_live() → overlay → patch |
+| `base/player.py` | Recording entry point: pipeline.process_recording_frame() → patch |
+| `base/patches/__init__.py` | Patch protocol + load_patch() factory |
+| `prototypes/TNC_v1/` | Trigger Note by Colour: hue→note, brightness→octave, flutter→effect |
+| `prototypes/TgSqC_v1/` | Toggle Sequence by Colour: hue→color ID, stability→PD toggle |
+| `prototypes/SCfBF/` | Stream Confidence from Blinks/Flutter: continuous confidence + eye-state booleans → PD |
+| `prototypes/SPX/` | Stream Pitch/X-Y/Velocity: gaze coords + velocity → PD |
+| `prototypes/RAVE_v1/` | Gaze/colour/velocity → RAVE latent dims for nn~ |
 
 ### Signal Bus Fields
 
@@ -124,13 +124,13 @@ class MyPatch:
         pass  # send cleanup messages to PD before exit (e.g. silence notes)
 ```
 
-Register the patch in `patches/base.py` under `load_patch()`. Create `patches/<name>/` as a package with `__init__.py` exporting the patch class, and a `README.md` documenting the mappings.
+Create `prototypes/<name>/` as a package with `__init__.py` calling `register_patch(name, cls)`. `base/patches/__init__.py` auto-discovers everything in `prototypes/` at startup — no manual registration needed. Use `uv run new-prototype <name>` to scaffold the boilerplate automatically.
 
 ## Critical Technical Knowledge
 
 ### NoteMapper and NoteGate (TNC_v1 patch)
 
-These live entirely in `patches/TNC_v1/` — they are prototype-specific.
+These live entirely in `prototypes/TNC_v1/` — they are prototype-specific.
 
 **NoteMapper** converts `signals.env.hue`, `signals.env.raw_hue`, and `signals.env.brightness` into a `NoteReading(note, octave, midi_note, raw_midi_note)`. Owns the octave stability window only; note stability is handled downstream by NoteGate.
 
@@ -158,11 +158,11 @@ Uses Pupil Capture's built-in blink detector (onset/offset events), not confiden
 
 **Flutter**: 3+ blinks in a 1.5s sliding window. Ends after 0.3s with no new blink.
 
-Real-time uses `StreamingBlinkTracker` (`signals/eye_blinks.py`). Recording playback reads pre-classified blink/flutter data from the recording file; `Pipeline.process_recording_frame()` handles flutter transition detection internally.
+Real-time uses `StreamingBlinkTracker` (`base/signals/eye_blinks.py`). Recording playback reads pre-classified blink/flutter data from the recording file; `Pipeline.process_recording_frame()` handles flutter transition detection internally.
 
 ### Colour-to-Note Mapping (TNC_v1 patch)
 
-Defined in `patches/TNC_v1/mapping.py` (`HUE_RANGES`, `NOTE_SEMITONES`).
+Defined in `prototypes/TNC_v1/mapping.py` (`HUE_RANGES`, `NOTE_SEMITONES`).
 
 ```
 Red     ~700nm  OpenCV 0–8, 165+   C   semitone 0
