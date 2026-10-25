@@ -51,3 +51,6 @@ articles/
 
 old_puredata/
 recordings/**/*.mp4
+
+# Separate local repository; protected by the Mac backup, not this Git history
+/mishmash-events-2026-hackathon/
